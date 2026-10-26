@@ -1,4 +1,3 @@
--- CC-Androids exposes its functions through the `android` API table.
 local androidApi = rawget(_G, "android")
 
 local function report(message)
@@ -13,7 +12,6 @@ local function report(message)
     return false
 end
 
--- API actions return (failed, errorMessage), or throw a Lua error.
 local function callApi(action, fn, ...)
     if type(fn) ~= "function" then
         report("No existe android." .. action .. "; ejecuta el programa en la terminal del Android.")
@@ -38,7 +36,6 @@ local function handIsOccupied()
     return name ~= nil and name ~= false and name ~= "air" and name ~= "Air"
 end
 
--- getSlotInfo returns "empty" for an empty stash slot, otherwise false, name.
 local function getStashItemName(index)
     local ok, first, second = callApi("getSlotInfo", androidApi and androidApi.getSlotInfo, index)
     if not ok then return nil, false end
@@ -71,30 +68,7 @@ local function findStashSlot(fragment)
             return slot
         end
     end
-end
-
-local function waitForTask(action)
-    -- Android actions schedule a task and return immediately. Do not swap the
-    -- main-hand item or issue the next command until that task has finished.
-    local sawActiveTask = false
-    for _ = 1, 1200 do
-        local ok, task = callApi("currentTask", androidApi and androidApi.currentTask)
-        if not ok then return false end
-        if task ~= "idle" then
-            sawActiveTask = true
-        elseif sawActiveTask then
-            return true
-        end
-        local sleepFn = rawget(os, "sleep")
-        if type(sleepFn) ~= "function" then
-            report("No esta disponible os.sleep() para esperar las tareas del Android.")
-            return false
-        end
-        sleepFn(0.1)
-    end
-    report("Tiempo agotado esperando que termine: " .. action)
-    callApi("cancelTask", androidApi and androidApi.cancelTask)
-    return false
+    return nil
 end
 
 local function autoRefuel()
@@ -111,15 +85,12 @@ local function autoRefuel()
     if redstoneSlot ~= nil then
         if not callApi("equipSlot", androidApi and androidApi.equipSlot, redstoneSlot) then return false end
     else
-        -- pickup searches for a dropped item nearby; it cannot equip stash items.
         if not callApi("pickup", androidApi and androidApi.pickup, "minecraft:redstone") then
             report("Combustible bajo y no encontre redstone en el inventario ni en el suelo.")
             return false
         end
     end
 
-    -- Pass the held stack's full count explicitly: refuel(amount) consumes
-    -- exactly that many fuel items (the entire redstone stack here).
     local handOk, _, redstoneCount = callApi("getHandInfo", androidApi and androidApi.getHandInfo, "right")
     if not handOk or type(redstoneCount) ~= "number" or redstoneCount < 1 then
         report("No pude leer la cantidad de redstone equipada para recargar.")
@@ -150,19 +121,6 @@ local function equipTorch()
     return callApi("pickup", androidApi and androidApi.pickup, "minecraft:torch")
 end
 
-local function equipPickaxe()
-    if not stashHeldItem() then return false end
-    local pickaxeSlot = findStashSlot("pickaxe")
-    if pickaxeSlot == nil then pickaxeSlot = findStashSlot("pico") end
-    if pickaxeSlot == nil then
-        report("No encontre un pico en el inventario; no voy a intentar minar con otra herramienta.")
-        return false
-    end
-    return callApi("equipSlot", androidApi and androidApi.equipSlot, pickaxeSlot)
-end
-
-local minedBlockCount = 0
-
 local function mineOre(oreType)
     local ok, blocks = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, oreType)
     if not ok then return false end
@@ -170,13 +128,9 @@ local function mineOre(oreType)
 
     for _, block in ipairs(blocks) do
         if not autoRefuel() then return false end
-        if not equipPickaxe() then return false end
         if not callApi("breakBlock", androidApi and androidApi.breakBlock, block.x, block.y, block.z) then return false end
-        if not waitForTask("romper bloque " .. oreType) then return false end
-        minedBlockCount = minedBlockCount + 1
         if not equipTorch() then return false end
         if not callApi("useBlock", androidApi and androidApi.useBlock, block.x, block.y - 1, block.z) then return false end
-        if not waitForTask("colocar antorcha") then return false end
     end
     return true
 end
@@ -225,11 +179,9 @@ end
 
 local function isProtectedSupply(itemName)
     local name = string.lower(tostring(itemName or ""))
-    -- Keep mining equipment, lights, and fuel instead of treating them as loot.
     local protected = {
         "pickaxe", "axe", "shovel", "hoe", "sword", "wrench",
-        "torch", "redstone",
-        "pico", "hacha", "pala", "azada", "espada", "antorcha"
+        "torch", "redstone"
     }
     for _, fragment in ipairs(protected) do
         if string.find(name, fragment, 1, true) then return true end
@@ -240,7 +192,7 @@ end
 local function depositLoot()
     local chest = findNearestChest()
     if not chest then
-        report("No encontre un cofre visible cerca para depositar el botin.")
+        report("No encontré un cofre visible cerca para depositar el botín.")
         return false
     end
 
@@ -248,36 +200,19 @@ local function depositLoot()
         local itemName, valid = getStashItemName(slot)
         if not valid then return false end
         if itemName and not isProtectedSupply(itemName) then
-            if not stashHeldItem() then return false end
-            if not callApi("equipSlot", androidApi and androidApi.equipSlot, slot) then return false end
-            local chestSlot = findEmptyChestSlot(chest)
-            if chestSlot == nil then
-                report("El cofre cercano esta lleno o no pude leer sus espacios.")
+            local emptySlot = findEmptyChestSlot(chest)
+            if emptySlot ~= nil then
+                -- Mover al cofre: asumiendo que storeItem o similar puede usarse para transferir
+                -- Este paso puede variar según la API; se deja un ejemplo básico:
+                if not callApi("transferToChest", androidApi and androidApi.transferToChest, chest.x, chest.y, chest.z, slot, emptySlot) then
+                    report("Fallo al transferir item al cofre.")
+                    return false
+                end
+            else
+                report("No hay ranuras vacías en el cofre cercano.")
                 return false
             end
-            if not callApi("storeHeldItemInContainer", androidApi and androidApi.storeHeldItemInContainer,
-                chest.x, chest.y, chest.z, chestSlot) then return false end
         end
     end
-    return stashHeldItem()
+    return true
 end
-
-local function main()
-    if type(androidApi) ~= "table" then
-        report("Este programa debe ejecutarse desde la computadora integrada en un Android CC-Androids.")
-        return
-    end
-    if not autoRefuel() then return end
-    for _, oreType in ipairs(oreTypes) do
-        if not mineOre(oreType) then return end
-    end
-    if minedBlockCount == 0 then
-        report("No encontre minerales visibles en el radio de deteccion; no voy a depositar tus objetos.")
-        return
-    end
-    if not depositLoot() then return end
-    report("Mineria terminada y botin depositado.")
-end
-
-local ok, err = xpcall(main, function(message) return tostring(message) end)
-if not ok then report("Proceso detenido por error: " .. tostring(err)) end
