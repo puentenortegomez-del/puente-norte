@@ -2,93 +2,85 @@
 -- miner.lua
 -- CC:Androids 1.3.0
 -- Tunel hacia X negativo
--- Ancho: Z=-801 y Z=-802
--- Alto: Y=33 y Y=34
+-- Carriles Z=-801 y Z=-802
+-- Alturas Y=33 y Y=34
 
 local a = _G.android
 
-local Z1, Z2 = -801, -802
-local Y1, Y2 = 33, 34
+local ZS = {-801, -802}
+local YS = {33, 34}
 local WAIT = 0.2
 local TIMEOUT = 300
 
-local function getPos()
+local function position()
     local p = a.getSelf()
-    if type(p) ~= "table"
-        or type(p.posX) ~= "number"
-        or type(p.posY) ~= "number"
-        or type(p.posZ) ~= "number" then
-        error("No se pudo leer la posicion del androide")
-    end
+    assert(type(p) == "table" and type(p.posX) == "number",
+        "No se puede leer la posicion")
     return p
 end
 
 local function waitIdle()
-    local elapsed = 0
+    local t = 0
     while a.currentTask() ~= "idle" do
         sleep(WAIT)
-        elapsed = elapsed + WAIT
-        if elapsed >= TIMEOUT then
-            error("Tiempo agotado esperando la tarea")
+        t = t + WAIT
+        if t >= TIMEOUT then
+            error("Tiempo agotado esperando al androide")
         end
     end
 end
 
-local function run(method, x, y, z)
+local function task(method, x, y, z)
     waitIdle()
-
     local ok, result = pcall(function()
         return a[method](x, y, z)
     end)
-
     if not ok then
         error(method .. ": " .. tostring(result))
     end
-
     if type(result) == "table" and result[1] == true then
         error(method .. ": " .. tostring(result[2]))
     end
-
     waitIdle()
 end
 
 local function mineSection(x)
-    -- Romper solo las cuatro posiciones del tunel.
-    run("breakBlock", x, Y1, Z1)
-    run("breakBlock", x, Y2, Z1)
-    run("breakBlock", x, Y1, Z2)
-    run("breakBlock", x, Y2, Z2)
+    for _, z in ipairs(ZS) do
+        for _, y in ipairs(YS) do
+            task("breakBlock", x, y, z)
+        end
+    end
 end
 
 local function main()
-    local p = getPos()
-    local currentX = math.floor(p.posX)
+    local p = position()
+    local nextX = math.floor(p.posX) - 1
 
-    print("Tunel hacia X negativo")
-    print("Inicio X=" .. p.posX ..
+    print("MINER V2 iniciado")
+    print("Direccion: X negativo")
+    print("Z=-801 y Z=-802; Y=33 y Y=34")
+    print("Posicion inicial: X=" .. p.posX ..
         " Y=" .. p.posY .. " Z=" .. p.posZ)
-    print("Ancho: Z=-801 y Z=-802")
-    print("Altura: Y=33 y Y=34")
 
     while true do
-        local targetX = currentX - 1
-        print("Excavando X=" .. targetX)
+        print("Picando seccion X=" .. nextX)
+        mineSection(nextX)
 
-        mineSection(targetX)
+        -- Actualizar el objetivo desde la posicion real.
+        p = position()
+        local reachedX = math.floor(p.posX)
 
-        -- Actualizar siempre la posicion real despues de excavar.
-        p = getPos()
-        currentX = math.floor(p.posX)
+        -- Si el androide no avanzo, intentar acercarlo al eje.
+        if reachedX > nextX then
+            task("moveTo", nextX, 33, -801)
+            p = position()
+            reachedX = math.floor(p.posX)
+        end
 
-        -- Continuar desde la siguiente seccion en X negativo.
-        targetX = currentX - 1
-        run("moveTo", targetX, Y1, Z1)
-
-        p = getPos()
-        currentX = math.floor(p.posX)
-
-        print("Posicion actual X=" .. p.posX ..
+        print("Posicion actual: X=" .. p.posX ..
             " Y=" .. p.posY .. " Z=" .. p.posZ)
+
+        nextX = math.min(nextX - 1, reachedX - 1)
     end
 end
 
