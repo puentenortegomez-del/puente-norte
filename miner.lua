@@ -1,25 +1,20 @@
 
--- CC:Androids 1.3.0 - Tunel continuo
--- Direccion X negativa
--- Ancho: 3 bloques
--- Alto: 2 bloques
--- No romper Y=33
--- Longitud ilimitada
+-- CC:Androids 1.3.0
+-- Tunel recto hacia X negativo
+-- Ancho 3, alto 2
+-- Suelo Y=33 protegido
 
 local a = _G.android
 
 local FLOOR_Y = 33
-local TUNNEL_HEIGHT = 2
+local CENTER_Z = -802
+local HEIGHT = 2
 local WIDTH = 3
 local WAIT_DELAY = 0.25
 local MAX_WAIT = 120
 
 local function getPos()
-    local p = a.getSelf()
-    if not p or p.posX == nil or p.posY == nil or p.posZ == nil then
-        error("No se pudo obtener la posicion")
-    end
-    return p
+    return a.getSelf()
 end
 
 local function waitIdle()
@@ -27,42 +22,46 @@ local function waitIdle()
         local ok, task = pcall(function()
             return a.currentTask()
         end)
+
         if ok and task == "idle" then
             return
         end
+
         sleep(WAIT_DELAY)
     end
-    error("Tiempo agotado esperando la tarea")
+
+    error("La tarea no termina")
 end
 
-local function runTask(method, x, y, z)
+local function runTask(name, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
-        return a[method](x, y, z)
+        return a[name](x, y, z)
     end)
 
     if not ok then
-        error(method .. ": " .. tostring(result))
+        error(name .. ": " .. tostring(result))
     end
 
     if type(result) == "table" and result[1] == true then
-        error(method .. ": " .. tostring(result[2]))
+        error(name .. ": " .. tostring(result[2]))
     end
 
     waitIdle()
 end
 
-local function mineFace(blockX, centerZ)
-    -- Solo se excavan Y=34 e Y=35.
-    -- Y=33 nunca se pasa a breakBlock().
-    for y = FLOOR_Y + 1, FLOOR_Y + TUNNEL_HEIGHT do
-        for dz = -1, 1 do
+local function mineFace(x)
+    -- Centro primero, despues los dos laterales.
+    local offsets = {0, -1, 1}
+
+    for y = FLOOR_Y + 1, FLOOR_Y + HEIGHT do
+        for i = 1, #offsets do
             runTask(
                 "breakBlock",
-                blockX,
+                x,
                 y,
-                centerZ + dz
+                CENTER_Z + offsets[i]
             )
         end
     end
@@ -70,54 +69,40 @@ end
 
 local function main()
     local p = getPos()
+    local x = math.floor(p.posX)
 
-    -- Separar las coordenadas enteras de los bloques
-    -- de la posicion fisica, que puede tener decimales.
-    local blockX = math.floor(p.posX)
-    local centerZ = math.floor(p.posZ)
-
-    print("Minero iniciado")
-    print("Posicion inicial X=" .. tostring(p.posX)
-        .. " Y=" .. tostring(p.posY)
-        .. " Z=" .. tostring(p.posZ))
-    print("Siguiente bloque X=" .. tostring(blockX - 1))
+    print("Tunel recto iniciado")
+    print("Direccion: X negativo")
+    print("Eje fijo Z=" .. CENTER_Z)
     print("Suelo Y=33 protegido")
 
     while true do
-        local nextX = blockX - 1
+        local nextX = x - 1
 
-        print("Excavando columna X=" .. tostring(nextX))
+        mineFace(nextX)
 
-        -- Limpiar la siguiente seccion.
-        mineFace(nextX, centerZ)
-
-        -- No usar la posicion decimal para calcular
-        -- el siguiente bloque.
+        -- Avanzar por el eje central, sin cambiar Z.
         runTask(
             "moveTo",
             nextX,
             p.posY,
-            centerZ
+            CENTER_Z
         )
 
         local current = getPos()
 
-        -- Comprobar el avance por bloque, no por decimales.
-        local currentBlockX = math.floor(current.posX)
-
-        if currentBlockX >= blockX then
+        if math.floor(current.posX) >= x then
             error(
-                "No entro en el siguiente bloque. "
-                .. "Objetivo X=" .. tostring(nextX)
-                .. ", posicion X=" .. tostring(current.posX)
+                "No avanzo. Posicion: X="
+                .. tostring(current.posX)
+                .. " Z=" .. tostring(current.posZ)
             )
         end
 
-        blockX = nextX
+        x = nextX
         p = current
 
-        print("Bloque alcanzado. Siguiente X="
-            .. tostring(blockX - 1))
+        print("Avance recto: X=" .. tostring(x))
     end
 end
 
