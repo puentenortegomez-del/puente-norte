@@ -1,15 +1,10 @@
 
--- ==========================================
--- MINERO CC:ANDROIDs 1.3.0
--- Excavacion hacia X negativo
--- ==========================================
+-- CC:Androids 1.3.0 - Minero
+-- Direccion: X NEGATIVO
+-- Tunel: 3 ancho x 2 alto
+-- Salas: 16 x 16 x 16, cada 16 bloques de avance
 
-local A = _G.android
-
-if type(A) ~= "table" then
-    print("ERROR: API android no disponible")
-    return
-end
+local android = _G.android
 
 local CFG = {
     startX = 2212,
@@ -18,141 +13,123 @@ local CFG = {
 
     length = 40,
     width = 3,
-    height = 3,
+    height = 2,
 
-    maxWaitChecks = 120
+    roomEvery = 16,
+    roomSizeX = 16,
+    roomSizeY = 16,
+    roomSizeZ = 16,
+
+    waitLimit = 240
 }
 
-local function report(message)
-    print("[MINERO] " .. tostring(message))
-end
+local function waitIdle()
+    local checks = 0
 
-local function callAPI(name, x, y, z)
-    local fn = A[name]
+    while checks < CFG.waitLimit do
+        local ok, task = pcall(function()
+            return android.currentTask()
+        end)
 
-    if type(fn) ~= "function" then
-        return false, "Funcion no disponible: " .. name
-    end
-
-    local ok, result = pcall(fn, x, y, z)
-
-    if not ok then
-        return false, tostring(result)
-    end
-
-    if type(result) == "table" and result[1] == true then
-        return false, tostring(result[2] or "Error de API")
-    end
-
-    return true
-end
-
-local function waitForIdle()
-    if type(A.currentTask) ~= "function" then
-        report("No existe currentTask")
-        return false
-    end
-
-    if type(sleep) ~= "function" then
-        report("No existe sleep; se cancela por seguridad")
-        return false
-    end
-
-    for i = 1, CFG.maxWaitChecks do
-        local ok, task = pcall(A.currentTask)
-
-        if not ok then
-            report("Error consultando la tarea")
-            return false
-        end
-
-        if task == "idle" then
+        if ok and task == "idle" then
             return true
         end
 
         sleep(0.25)
-    end
-
-    report("Tiempo de espera agotado")
-
-    if type(A.cancelTask) == "function" then
-        pcall(A.cancelTask)
+        checks = checks + 1
     end
 
     return false
 end
 
-local function checkFuel()
-    if type(A.fuelLevel) ~= "function" then
-        report("No se puede consultar el combustible")
-        return false
+local function runTask(method, x, y, z)
+    if not waitIdle() then
+        error("El androide no termino la tarea anterior.")
     end
 
-    local ok, fuel = pcall(A.fuelLevel)
+    local ok, result = pcall(function()
+        return android[method](x, y, z)
+    end)
 
-    if not ok or type(fuel) ~= "number" then
-        report("Error leyendo combustible")
-        return false
+    if not ok then
+        error("Fallo " .. method .. ": " .. tostring(result))
     end
 
-    if fuel <= 0 then
-        report("Sin combustible")
-        return false
+    if type(result) == "table" and result[1] == true then
+        error("Error de la API: " .. tostring(result[2]))
     end
 
-    return true
+    if not waitIdle() then
+        error("Tiempo agotado esperando a " .. method)
+    end
 end
 
 local function mineBlock(x, y, z)
-    if not checkFuel() then
-        return false
+    runTask("breakBlock", x, y, z)
+end
+
+-- Excava una cara vertical delante del androide.
+-- X siempre disminuye.
+local function clearTunnelFace(x)
+    local halfWidth = math.floor(CFG.width / 2)
+
+    for y = CFG.startY, CFG.startY + CFG.height - 1 do
+        for z = CFG.startZ - halfWidth,
+                 CFG.startZ + halfWidth do
+            mineBlock(x, y, z)
+        end
+    end
+end
+
+-- Sala situada a un lado del tunel.
+-- El tunel pasa por el centro de la pared de entrada.
+local function clearRoom(backX)
+    local halfWidth = math.floor(CFG.roomSizeZ / 2)
+    local minZ = CFG.startZ - halfWidth
+    local minY = CFG.startY
+
+    print("Excavando sala en X=" .. backX)
+
+    -- Cada capa avanza en X negativo.
+    for dx = 1, CFG.roomSizeX do
+        local x = backX - dx
+
+        for dy = 0, CFG.roomSizeY - 1 do
+            for dz = 0, CFG.roomSizeZ - 1 do
+                mineBlock(x, minY + dy, minZ + dz)
+            end
+        end
     end
 
-    local ok, err = callAPI("breakBlock", x, y, z)
-
-    if not ok then
-        report(
-            "Error en X=" .. x
-            .. " Y=" .. y
-            .. " Z=" .. z
-            .. ": " .. tostring(err)
-        )
-        return false
-    end
-
-    return waitForIdle()
+    print("Sala terminada en X=" .. (backX - CFG.roomSizeX))
 end
 
 local function main()
-    report("Inicio de la excavacion")
-    report("Direccion: X negativo")
-    report("Inicio: 2212, 32, -801")
+    print("Minero iniciado: direccion X negativa")
+    print("Tunel 3x2; longitud " .. CFG.length)
 
-    local halfWidth = math.floor(CFG.width / 2)
+    for step = 1, CFG.length do
+        local nextX = CFG.startX - step
 
-    for step = 0, CFG.length - 1 do
-        -- Avanza numericamente hacia X negativo.
-        local x = CFG.startX - step
+        print("Despejando tramo X=" .. nextX)
+        clearTunnelFace(nextX)
 
-        for dz = -halfWidth, halfWidth do
-            for dy = 0, CFG.height - 1 do
-                local y = CFG.startY + dy
-                local z = CFG.startZ + dz
+        -- Avanza solo cuando la cara esta despejada.
+        runTask("moveTo", nextX, CFG.startY, CFG.startZ)
 
-                if not mineBlock(x, y, z) then
-                    report("Excavacion detenida")
-                    return
-                end
-            end
+        if step % CFG.roomEvery == 0 then
+            clearRoom(nextX)
         end
-
-        report("Columna completada en X=" .. x)
     end
 
-    report(
-        "Tunel terminado. Ultima X="
-        .. (CFG.startX - CFG.length + 1)
-    )
+    print("Recorrido terminado.")
 end
 
-main()
+local ok, err = pcall(main)
+
+if not ok then
+    pcall(function()
+        android.cancelTask()
+    end)
+    print("MINADO DETENIDO: " .. tostring(err))
+end
