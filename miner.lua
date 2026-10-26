@@ -73,6 +73,30 @@ local function findStashSlot(fragment)
     end
 end
 
+local function waitForTask(action)
+    -- Android actions schedule a task and return immediately. Do not swap the
+    -- main-hand item or issue the next command until that task has finished.
+    local sawActiveTask = false
+    for _ = 1, 1200 do
+        local ok, task = callApi("currentTask", androidApi and androidApi.currentTask)
+        if not ok then return false end
+        if task ~= "idle" then
+            sawActiveTask = true
+        elseif sawActiveTask then
+            return true
+        end
+        local sleepFn = rawget(os, "sleep")
+        if type(sleepFn) ~= "function" then
+            report("No esta disponible os.sleep() para esperar las tareas del Android.")
+            return false
+        end
+        sleepFn(0.1)
+    end
+    report("Tiempo agotado esperando que termine: " .. action)
+    callApi("cancelTask", androidApi and androidApi.cancelTask)
+    return false
+end
+
 local function autoRefuel()
     local ok, fuel = callApi("fuelLevel", androidApi and androidApi.fuelLevel)
     if not ok then return false end
@@ -126,6 +150,19 @@ local function equipTorch()
     return callApi("pickup", androidApi and androidApi.pickup, "minecraft:torch")
 end
 
+local function equipPickaxe()
+    if not stashHeldItem() then return false end
+    local pickaxeSlot = findStashSlot("pickaxe")
+    if pickaxeSlot == nil then pickaxeSlot = findStashSlot("pico") end
+    if pickaxeSlot == nil then
+        report("No encontre un pico en el inventario; no voy a intentar minar con otra herramienta.")
+        return false
+    end
+    return callApi("equipSlot", androidApi and androidApi.equipSlot, pickaxeSlot)
+end
+
+local minedBlockCount = 0
+
 local function mineOre(oreType)
     local ok, blocks = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, oreType)
     if not ok then return false end
@@ -133,9 +170,13 @@ local function mineOre(oreType)
 
     for _, block in ipairs(blocks) do
         if not autoRefuel() then return false end
+        if not equipPickaxe() then return false end
         if not callApi("breakBlock", androidApi and androidApi.breakBlock, block.x, block.y, block.z) then return false end
+        if not waitForTask("romper bloque " .. oreType) then return false end
+        minedBlockCount = minedBlockCount + 1
         if not equipTorch() then return false end
         if not callApi("useBlock", androidApi and androidApi.useBlock, block.x, block.y - 1, block.z) then return false end
+        if not waitForTask("colocar antorcha") then return false end
     end
     return true
 end
@@ -187,7 +228,8 @@ local function isProtectedSupply(itemName)
     -- Keep mining equipment, lights, and fuel instead of treating them as loot.
     local protected = {
         "pickaxe", "axe", "shovel", "hoe", "sword", "wrench",
-        "torch", "redstone"
+        "torch", "redstone",
+        "pico", "hacha", "pala", "azada", "espada", "antorcha"
     }
     for _, fragment in ipairs(protected) do
         if string.find(name, fragment, 1, true) then return true end
@@ -228,6 +270,10 @@ local function main()
     if not autoRefuel() then return end
     for _, oreType in ipairs(oreTypes) do
         if not mineOre(oreType) then return end
+    end
+    if minedBlockCount == 0 then
+        report("No encontre minerales visibles en el radio de deteccion; no voy a depositar tus objetos.")
+        return
     end
     if not depositLoot() then return end
     report("Mineria terminada y botin depositado.")
