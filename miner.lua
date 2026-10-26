@@ -5,46 +5,77 @@ local tunnelConfig = {
     tunnelWidth  = 3,       -- ancho de la sección del túnel (en Z)
     tunnelHeight = 3,        -- altura del túnel (en Y)
     roomSize = {w = 16, h = 16, d = 16}, -- sala 16x16x16
-    roomOffsetZLeft  = -math.floor(3/2) - 8,  -- desplazamiento relativo para sala izquierda
-    roomOffsetZRight =  math.floor(3/2) + 8,   -- desplazamiento relativo para sala derecha
-    roomSpacing = 6            -- separación entre túnel y cada sala (aprox)
+    -- Desplazamientos para las salas respecto al túnel (a izquierda y derecha)
+    leftOffsetZ  = -math.floor(3/2) - 8, -- ajuste para sala izquierda
+    rightOffsetZ =  math.floor(3/2) + 8,  -- ajuste para sala derecha
+    roomInterval = 16            -- distancia entre salas a lo largo del túnel
 }
 
--- Lista de minerales para detección
+-- Lista de minerales para detección (ejemplo, ajusta a tu API si es necesario)
 local oreTypes = {
-    "minecraft:coal_ore", "minecraft:deepslate_coal_ore",
-    "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
-    "minecraft:copper_ore", "minecraft:deepslate_copper_ore",
-    "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
-    "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore",
-    "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
-    "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
-    "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore",
-    "minecraft:ancient_debris"
+    "minecraft:coal_ore","minecraft:iron_ore","minecraft:copper_ore",
+    "minecraft:gold_ore","minecraft:redstone_ore","minecraft:lapis_ore",
+    "minecraft:diamond_ore","minecraft:emerald_ore","minecraft:ancient_debris"
 }
 
--- Utilidades existentes (asumiendo que ya están en tu archivo)
-local androidApi = rawget(_G, "android")
-local function report(...) ... end
-local function callApi(...) ... end
-local function stashHeldItem() ... end
-local function autoRefuel() ... end
-local function placeLight(...) ... end
-
--- Ver si hay minerales en el área cercana (simplificado)
-local function mineralDetected()
-    local ok, found = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, oreTypes[1])
-    -- Si no devuelve, asumimos que no hay mineral detectable de momento
-    if not ok or type(found) ~= "table" or #found == 0 then
-        return false
+-- Utilidades existentes (asegúrate de que existan en tu entorno)
+local androidApi = rawget(_G, "android") -- si tu código expone una API global llamada "android"
+local function report(...) 
+    -- Usa la función de reporte de tu código; si no existe, imprime
+    if type(select(1, ...)) == "string" then
+        print(table.concat({...}, " "))
+    else
+        print(...)
     end
+end
+
+local function callApi(name, ...)
+    -- Wrapper genérico; ajusta a cómo llamas a la API real
+    if androidApi and type(androidApi[name]) == "function" then
+        return true, androidApi[name](...)
+    else
+        -- Intenta una versión alternativa si tienes un método único
+        local ok, res = pcall(function() return _G[name](...) end)
+        if ok then
+            return true, res
+        else
+            return false, "API no disponible: " .. tostring(name)
+        end
+    end
+end
+
+local function autoRefuel()
+    -- Placeholder: reemplaza con tu lógica de recarga
+    -- Si falla, devuelve false para indicar interrupción
     return true
 end
 
--- Crear túnel recto en X
+local function placeLight(x, y, z, kind)
+    if androidApi and type(androidApi.placeBlock) == "function" then
+        return androidApi.placeBlock(x, y, z, kind)
+    end
+    -- Si no existe, no haces nada
+    return true
+end
+
+-- Detección de minerales en el área cercana (simplificada)
+local function mineralDetected()
+    -- Intenta consultar bloques cercanos; si no hay soporte, asume false
+    for _, t in ipairs(oreTypes) do
+        local ok, found = callApi("getBlockType", androidApi and androidApi.getBlockType, 0, 0, 0)
+        if ok and found and found ~= "air" then
+            -- Si encuentras un mineral (simplificado), devuelves true
+            return true
+        end
+    end
+    return false
+end
+
+-- Crear túnel recto en X positivo
 local function tunnelSegment(length)
     for i = 1, length do
         local baseX, baseY, baseZ = i - 1, 0, 0
+
         for dz = -math.floor(tunnelConfig.tunnelWidth / 2),
                   math.floor(tunnelConfig.tunnelWidth / 2) do
             for dy = 0, tunnelConfig.tunnelHeight - 1 do
@@ -54,14 +85,18 @@ local function tunnelSegment(length)
                 end
             end
         end
-        if not autoRefuel() then return false end
-        -- Mover al siguiente paso si tienes control de movimiento (opcional)
+
+        if not autoRefuel() then
+            return false
+        end
+
+        -- Si tienes control de movimiento, podrías avanzar aquí
         -- moveForward(1)
     end
     return true
 end
 
--- Crear sala centrada alrededor del centro
+-- Crear una sala 16x16x16 centrada alrededor de (cx, cy, cz)
 local function createRoomAt(cx, cy, cz, size)
     local w, h, d = size.w, size.h, size.d
     local x0 = cx - math.floor(w / 2)
@@ -81,7 +116,7 @@ local function createRoomAt(cx, cy, cz, size)
         end
     end
 
-    -- Iluminación básica en puntos interiores
+    -- Iluminación básica en esquinas interiores
     local lights = {
         {x = x0 + 2, y = y0 + 2, z = z0 + 2},
         {x = x1 - 2, y = y0 + 2, z = z1 - 2},
@@ -101,22 +136,21 @@ local function tunnelAndRooms()
         return false
     end
 
-    -- Crear salas a intervalos a izquierda y derecha
     local tramo = 0
-    local paso = 16 -- cada cuántos bloques se genera una sala
+    local paso = tunnelConfig.roomInterval
 
     while tramo < tunnelConfig.tunnelLength do
         tramo = tramo + paso
 
-        -- Coordenadas de sala izquierda
+        -- Centro de sala izquierda
         local leftCX = tramo
         local leftCY = 8
-        local leftCZ = -math.floor(tunnelConfig.tunnelWidth / 2) - 8
+        local leftCZ = -math.floor(tunnelConfig.tunnelWidth / 2) -  math.abs(tunnelConfig.leftOffsetZ)
 
-        -- Coordenadas de sala derecha
+        -- Centro de sala derecha
         local rightCX = tramo
         local rightCY = 8
-        local rightCZ =  math.floor(tunnelConfig.tunnelWidth / 2) + 8
+        local rightCZ =  math.floor(tunnelConfig.tunnelWidth / 2) +  math.abs(tunnelConfig.rightOffsetZ)
 
         if not createRoomAt(leftCX, leftCY, leftCZ, tunnelConfig.roomSize) then
             return false
@@ -125,20 +159,22 @@ local function tunnelAndRooms()
             return false
         end
 
-        -- Detección de minerales: si no hay, seguimos; si hay, podemos ajustar
+        -- Detección de minerales: emitir aviso si hay o no
         if mineralDetected() then
             report("Minerales detectados en tramo " .. tostring(tramo))
         else
             report("Sin minerales detectados en tramo " .. tostring(tramo))
         end
 
-        if not autoRefuel() then return false end
+        if not autoRefuel() then
+            return false
+        end
     end
 
     return true
 end
 
--- Inicio
+-- Función de entrada para iniciar el proceso completo
 local function empezarTunelesYSalas()
     if not tunnelAndRooms() then
         report("Fallo al generar túneles o salas.")
