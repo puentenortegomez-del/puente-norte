@@ -1,4 +1,4 @@
--- miner_perfecto.lua
+-- miner.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,7 +19,7 @@ local function esperarTarea()
     end
 end
 
--- Sistema de recarga automática infalible (libera la mano, recarga y devuelve el pico)
+-- Recarga directa por prueba de slots (0 al 8)
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
@@ -28,7 +28,7 @@ local function comprobarYRecargar()
 
     print("Combustible bajo (" .. tostring(combustibleActual) .. "). Recargando...")
 
-    -- 1. Buscar un slot vacío para apartar temporalmente lo que esté en la mano principal
+    -- Guardamos temporalmente el pico si está en la mano principal
     local slotVacio = nil
     for i = 0, 8 do
         local ok, info = pcall(android.getSlotInfo, i)
@@ -42,22 +42,23 @@ local function comprobarYRecargar()
         pcall(android.storeItem, slotVacio)
     end
 
-    -- 2. Barrer los slots del 0 al 8 para encontrar redstone y recargar
     local recargaExitosa = false
+
+    -- Probamos equipar y recargar desde cada slot del 0 al 8
     for i = 0, 8 do
         local okEquip = pcall(android.equipSlot, i)
         if okEquip then
             pcall(android.refuel)
             local nuevoCombustible = android.fuelLevel()
             if nuevoCombustible and nuevoCombustible > combustibleActual then
-                print("¡Recarga exitosa! Combustible actual: " .. tostring(nuevoCombustible))
+                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible: " .. tostring(nuevoCombustible))
                 recargaExitosa = true
                 break
             end
         end
     end
 
-    -- 3. Buscar el pico en el inventario y volver a equiparlo en la mano principal
+    -- Devolvemos el pico a la mano principal si lo guardamos
     for i = 0, 8 do
         local ok, info = pcall(android.getSlotInfo, i)
         if ok and type(info) == "string" and string.find(string.lower(info), "pickaxe") then
@@ -88,7 +89,7 @@ local function colocarAntorcha(x, y, z)
     end
 end
 
--- Depositar loot en el cofre más cercano detectado
+-- Depositar en el cofre cercano sin importar distancia
 local function depositarEnCofre()
     local cofres = android.getBlocksOfType("chest")
     if cofres and #cofres > 0 then
@@ -105,7 +106,7 @@ local function depositarEnCofre()
                 end
             end
         end
-        print("Loot depositado en el cofre con éxito.")
+        print("Loot depositado en el cofre.")
     end
 end
 
