@@ -1,4 +1,4 @@
--- miner_definitivo.lua
+-- miner_definitivo_slots.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,40 +19,57 @@ local function esperarTarea()
     end
 end
 
--- Autorecarga directa probando slot por slot (0 al 8)
+-- Función para escanear y recargar revisando todos los slots posibles (0 al 9)
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
         return true
     end
 
-    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
+    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Escaneando slots 0-9...")
 
-    -- Recorremos todos los slots de almacenamiento del 0 al 8
-    for i = 0, 8 do
-        -- Intentamos equipar el slot directamente
-        local okEquip = pcall(android.equipSlot, i)
-        if okEquip then
-            -- Intentamos recargar con lo que tenga en la mano
-            local okRefuel, resRefuel = pcall(android.refuel)
+    -- Recorremos del 0 al 9 como indica la API para getSlotInfo
+    for i = 0, 9 do
+        local okInfo, nombreItem = pcall(android.getSlotInfo, i)
+        if okInfo and nombreItem then
+            print("Slot " .. i .. ": " .. tostring(nombreItem))
             
-            -- Según la API, refuel devuelve una tabla con un booleano 'false' y el nuevo nivel si es exitoso,
-            -- o lanza un error / devuelve true si falla. Verificamos si subió el combustible o si no dio error de tabla.
-            local nuevoCombustible = android.fuelLevel()
-            if nuevoCombustible and nuevoCombustible > combustibleActual then
-                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible actual: " .. tostring(nuevoCombustible))
-                return true
+            -- Si el slot contiene algo relacionado con redstone
+            if type(nombreItem) == "string" and (string.find(string.lower(nombreItem), "redstone") or string.find(string.lower(nombreItem), "dust")) then
+                print("¡Redstone detectada en slot " .. i .. "!")
+                
+                -- Intentamos equiparlo
+                local okEquip = pcall(android.equipSlot, i)
+                if okEquip then
+                    local okRefuel = pcall(android.refuel)
+                    local nuevoCombustible = android.fuelLevel()
+                    if nuevoCombustible and nuevoCombustible > combustibleActual then
+                        print("¡Recarga exitosa! Nuevo combustible: " .. tostring(nuevoCombustible))
+                        return true
+                    end
+                end
             end
         end
     end
 
-    print("¡ADVERTENCIA! No se pudo recargar desde los slots 0-8.")
+    -- Método alternativo por fuerza bruta si el nombre no coincide exactamente
+    for i = 0, 9 do
+        pcall(android.equipSlot, i)
+        local okRefuel = pcall(android.refuel)
+        local nuevoCombustible = android.fuelLevel()
+        if nuevoCombustible and nuevoCombustible > combustibleActual then
+            print("¡Recarga por fuerza bruta exitosa en slot " .. i .. "!")
+            return true
+        end
+    end
+
+    print("¡ADVERTENCIA! No se pudo recargar desde ningún slot.")
     return false
 end
 
 -- Colocación inteligente de antorchas
 local function colocarAntorcha(x, y, z)
-    for i = 0, 8 do
+    for i = 0, 9 do
         pcall(android.equipSlot, i)
         local hand = android.getHandInfo("main")
         if hand and hand.name and string.find(string.lower(hand.name), "torch") then
@@ -63,18 +80,18 @@ local function colocarAntorcha(x, y, z)
     end
 end
 
--- Depositar inventario en cualquier cofre cercano sin importar distancia (dentro de los detectados)
+-- Depositar en el cofre más cercano detectado
 local function depositarEnCofre()
     local cofres = android.getBlocksOfType("chest")
     if cofres and #cofres > 0 then
         local cofre = cofres[1]
         print("Cofre detectado en: " .. cofre.x .. ", " .. cofre.y .. ", " .. cofre.z)
         
-        for i = 0, 8 do
+        for i = 0, 9 do
             pcall(android.equipSlot, i)
             pcall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
         end
-        print("Loot depositado en el cofre con éxito.")
+        print("Loot depositado en el cofre.")
     end
 end
 
