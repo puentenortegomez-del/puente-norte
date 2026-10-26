@@ -1,181 +1,262 @@
--- Configuración de túneles y salas, siguiendo la API Android
-local tunnelConfig = {
-    pathDirection = {x = 1, y = 0, z = 0}, -- avanzar en X positivo
-    tunnelLength  = 40,                  -- longitud del túnel
-    tunnelWidth   = 3,                   -- ancho del túnel (en Z)
-    tunnelHeight  = 3,                   -- altura del túnel (en Y)
-    roomSize = {w = 16, h = 16, d = 16}, -- sala 16x16x16
-    leftOffsetZ  = -8,                   -- desplazamiento para sala izquierda
-    rightOffsetZ =  8,                   -- desplazamiento para sala derecha
-    roomInterval = 16                    -- distancia entre salas a lo largo del túnel
+
+-- Tuneles y salas para CC:Androids
+-- Direccion: X positivo
+-- Requiere espacio y combustible suficiente.
+
+local android = _G.android
+
+if type(android) ~= "table" then
+    print("ERROR: API android no disponible.")
+    return
+end
+
+local config = {
+    tunnelLength = 40,
+    tunnelWidth = 3,
+    tunnelHeight = 3,
+
+    roomWidth = 16,
+    roomHeight = 16,
+    roomDepth = 16,
+
+    roomInterval = 16,
+    leftOffsetZ = -9,
+    rightOffsetZ = 9
 }
 
 local oreTypes = {
-    "minecraft:coal_ore","minecraft:iron_ore","minecraft:copper_ore",
-    "minecraft:gold_ore","minecraft:redstone_ore","minecraft:lapis_ore",
-    "minecraft:diamond_ore","minecraft:emerald_ore","minecraft:ancient_debris"
+    "minecraft:coal_ore",
+    "minecraft:iron_ore",
+    "minecraft:copper_ore",
+    "minecraft:gold_ore",
+    "minecraft:redstone_ore",
+    "minecraft:lapis_ore",
+    "minecraft:diamond_ore",
+    "minecraft:emerald_ore",
+    "minecraft:ancient_debris",
+    "minecraft:deepslate_coal_ore",
+    "minecraft:deepslate_iron_ore",
+    "minecraft:deepslate_copper_ore",
+    "minecraft:deepslate_gold_ore",
+    "minecraft:deepslate_redstone_ore",
+    "minecraft:deepslate_lapis_ore",
+    "minecraft:deepslate_diamond_ore",
+    "minecraft:deepslate_emerald_ore"
 }
 
--- Acceso a la API Android expuesta en global "android" (según tu documentación)
-local androidApi = _G.android
-
--- Utilidades básicas
-local function report(...)
-    -- Imprime en consola/log; opcional adaptar a tu sistema de logs
-    print(table.concat({...}, " "))
+local function report(message)
+    print("[Tuneles] " .. tostring(message))
 end
 
+-- Comprueba que existe una funcion de la API y la ejecuta.
+-- La API puede devolver una tabla cuyo primer valor sea true
+-- cuando se produce un error.
 local function callApi(name, ...)
-    if androidApi and type(androidApi[name]) == "function" then
-        return true, androidApi[name](...)
-    else
-        -- Intento alternativo usando _G si existe
-        local f = _G[name]
-        if type(f) == "function" then
-            local ok, res = pcall(f, ...)
-            if ok then return true, res end
-        end
-        return false, "API no disponible: " .. tostring(name)
-    end
-end
+    local fn = android[name]
 
-local function autoRefuel()
-    -- Placeholder: ajusta con tu lógica de recarga si aplica
-    return true
-end
-
-local function placeLight(x, y, z, kind)
-    if androidApi and type(androidApi.placeBlock) == "function" then
-        return androidApi.placeBlock(x, y, z, kind)
-    end
-    return true
-end
-
-local function mineralDetected()
-    -- Detección simplificada basada en bloques cercanos
-    for _, t in ipairs(oreTypes) do
-        local ok, res = callApi("getBlockType", 0, 0, 0)
-        if ok and res and res ~= "air" then
-            return true
-        end
-    end
-    return false
-end
-
-local function tunnelSegment(length)
-    for i = 1, length do
-        local baseX, baseY, baseZ = i - 1, 0, 0
-
-        for dz = -math.floor(tunnelConfig.tunnelWidth / 2),
-                  math.floor(tunnelConfig.tunnelWidth / 2) do
-            for dy = 0, tunnelConfig.tunnelHeight - 1 do
-                local x, y, z = baseX, dy, baseZ + dz
-                local ok, _ = callApi("breakBlock", x, y, z)
-                if not ok then
-                    return false
-                end
-            end
-        end
-
-        if not autoRefuel() then
-            return false
-        end
-
-        -- Si tu entorno permite movimiento, podrías hacer moveTo aquí
-        -- androidApi.moveTo(baseX + 1, 0, baseZ)
-    end
-    return true
-end
-
-local function createRoomAt(cx, cy, cz, size)
-    local w, h, d = size.w, size.h, size.d
-    local x0 = cx - math.floor(w / 2)
-    local x1 = cx + math.floor(w / 2)
-    local y0 = cy - math.floor(h / 2)
-    local y1 = cy + math.floor(h / 2)
-    local z0 = cz - math.floor(d / 2)
-    local z1 = cz + math.floor(d / 2)
-
-    for x = x0, x1 do
-        for y = y0, y1 do
-            for z = z0, z1 do
-                local ok, _ = callApi("breakBlock", x, y, z)
-                if not ok then
-                    return false
-                end
-            end
-        end
+    if type(fn) ~= "function" then
+        return false, "Funcion no disponible: " .. name
     end
 
-    local lights = {
-        {x = x0 + 2, y = y0 + 2, z = z0 + 2},
-        {x = x1 - 2, y = y0 + 2, z = z1 - 2},
-        {x = x0 + 2, y = y0 + 2, z = z1 - 2},
-        {x = x1 - 2, y = y0 + 2, z = z0 + 2},
+    local ok, result = pcall(fn, ...)
+
+    if not ok then
+        return false, tostring(result)
+    end
+
+    if type(result) == "table" and result[1] == true then
+        return false, tostring(result[2] or "Error de la API")
+    end
+
+    return true, result
+end
+
+local function getPosition()
+    local ok, selfInfo = callApi("getSelf")
+
+    if not ok or type(selfInfo) ~= "table" then
+        report("No se pudo obtener la posicion del androide.")
+        return nil
+    end
+
+    if type(selfInfo.posX) ~= "number"
+        or type(selfInfo.posY) ~= "number"
+        or type(selfInfo.posZ) ~= "number" then
+        report("La API devolvio coordenadas invalidas.")
+        return nil
+    end
+
+    return {
+        x = math.floor(selfInfo.posX),
+        y = math.floor(selfInfo.posY),
+        z = math.floor(selfInfo.posZ)
     }
-    for _, L in ipairs(lights) do
-        placeLight(L.x, L.y, L.z, "minecraft:torch")
+end
+
+local function checkFuel()
+    local ok, fuel = callApi("fuelLevel")
+
+    if not ok or type(fuel) ~= "number" then
+        report("No se pudo comprobar el combustible.")
+        return false
+    end
+
+    if fuel <= 0 then
+        report("Sin combustible. Recarga el androide.")
+        return false
     end
 
     return true
 end
 
-local function tunnelAndRooms()
-    if not tunnelSegment(tunnelConfig.tunnelLength) then
+local function breakAt(x, y, z)
+    if not checkFuel() then
         return false
     end
 
-    local tramo = 0
-    local paso = tunnelConfig.roomInterval
+    local ok, err = callApi("breakBlock", x, y, z)
 
-    while tramo < tunnelConfig.tunnelLength do
-        tramo = tramo + paso
+    if not ok then
+        report(
+            "Error excavando "
+            .. x .. "," .. y .. "," .. z
+            .. ": " .. tostring(err)
+        )
+        return false
+    end
 
-        -- Coordenadas sala izquierda
-        local leftCX = tramo
-        local leftCY = 8
-        local leftCZ = -math.floor(tunnelConfig.tunnelWidth / 2) + tunnelConfig.leftOffsetZ
+    return true
+end
 
-        -- Coordenadas sala derecha
-        local rightCX = tramo
-        local rightCY = 8
-        local rightCZ =  math.floor(tunnelConfig.tunnelWidth / 2) + tunnelConfig.rightOffsetZ
+-- Excava un tramo recto en X positivo.
+local function tunnelSegment(start, length)
+    report("Excavando tunel de " .. length .. " bloques.")
 
-        if not createRoomAt(leftCX, leftCY, leftCZ, tunnelConfig.roomSize) then
-            return false
+    local halfWidth = math.floor(config.tunnelWidth / 2)
+
+    for dx = 0, length - 1 do
+        local x = start.x + dx
+
+        for dz = -halfWidth, halfWidth do
+            for dy = 0, config.tunnelHeight - 1 do
+                if not breakAt(
+                    x,
+                    start.y + dy,
+                    start.z + dz
+                ) then
+                    return false
+                end
+            end
         end
-        if not createRoomAt(rightCX, rightCY, rightCZ, tunnelConfig.roomSize) then
-            return false
-        end
 
-        if mineralDetected() then
-            report("Minerales detectados en tramo " .. tostring(tramo))
-        else
-            report("Sin minerales detectados en tramo " .. tostring(tramo))
-        end
-
-        if not autoRefuel() then
-            return false
+        if dx % 5 == 0 then
+            report("Tunel: " .. dx .. "/" .. length)
         end
     end
 
     return true
 end
 
-local function empezarTunelesYSalas()
-    if not tunnelAndRooms() then
-        report("Fallo al generar túneles o salas.")
-        return false
+-- Excava el volumen interior de una sala.
+local function createRoom(cx, baseY, cz)
+    local w = config.roomWidth
+    local h = config.roomHeight
+    local d = config.roomDepth
+
+    -- Las dimensiones son exactas: 16 x 16 x 16.
+    local x0 = cx - math.floor(w / 2)
+    local y0 = baseY
+    local z0 = cz - math.floor(d / 2)
+
+    report(
+        "Creando sala en "
+        .. cx .. "," .. baseY .. "," .. cz
+    )
+
+    for dx = 0, w - 1 do
+        for dy = 0, h - 1 do
+            for dz = 0, d - 1 do
+                if not breakAt(
+                    x0 + dx,
+                    y0 + dy,
+                    z0 + dz
+                ) then
+                    return false
+                end
+            end
+        end
     end
-    report("Túneles rectos con salas 16x16 a izquierda y derecha creados exitosamente.")
+
     return true
+end
+
+-- Busca minerales que el androide pueda ver.
+local function detectOres()
+    local found = {}
+
+    for _, ore in ipairs(oreTypes) do
+        local ok, blocks = callApi("getBlocksOfType", ore)
+
+        if ok and type(blocks) == "table"
+            and #blocks > 0 then
+            found[#found + 1] =
+                ore .. " (" .. #blocks .. ")"
+        end
+    end
+
+    if #found > 0 then
+        report("Minerales visibles: " .. table.concat(found, ", "))
+    else
+        report("No se han detectado minerales visibles.")
+    end
 end
 
 local function main()
-    local ok = empezarTunelesYSalas()
-    if not ok then
-        report("Ejecución terminada con errores.")
+    local start = getPosition()
+
+    if not start then
+        return
     end
+
+    report(
+        "Inicio: "
+        .. start.x .. "," .. start.y .. "," .. start.z
+    )
+
+    if not checkFuel() then
+        return
+    end
+
+    if not tunnelSegment(start, config.tunnelLength) then
+        report("Excavacion del tunel interrumpida.")
+        return
+    end
+
+    -- Crea dos salas por cada intervalo completo.
+    local distance = config.roomInterval
+
+    while distance < config.tunnelLength do
+        local roomX = start.x + distance
+
+        local leftZ = start.z + config.leftOffsetZ
+        local rightZ = start.z + config.rightOffsetZ
+
+        if not createRoom(roomX, start.y, leftZ) then
+            report("No se pudo completar la sala izquierda.")
+            return
+        end
+
+        if not createRoom(roomX, start.y, rightZ) then
+            report("No se pudo completar la sala derecha.")
+            return
+        end
+
+        detectOres()
+
+        distance = distance + config.roomInterval
+    end
+
+    report("Trabajo terminado.")
 end
 
 main()
