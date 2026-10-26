@@ -5,53 +5,65 @@ local tunnelConfig = {
     tunnelWidth  = 3,       -- ancho de la sección del túnel (en Z)
     tunnelHeight = 3,        -- altura del túnel (en Y)
     roomSize = {w = 16, h = 16, d = 16}, -- sala 16x16x16
-    roomOffsetZ = 0,         -- desplazamiento en Z respecto al centro del túnel
+    roomOffsetZLeft  = -math.floor(3/2) - 8,  -- desplazamiento relativo para sala izquierda
+    roomOffsetZRight =  math.floor(3/2) + 8,   -- desplazamiento relativo para sala derecha
     roomSpacing = 6            -- separación entre túnel y cada sala (aprox)
 }
 
--- Utilidades auxiliares existentes (asumidas ya en tu código)
--- local androidApi = rawget(_G, "android")
--- local function report(...) ... end
--- local function callApi(...) ... end
--- local function stashHeldItem() ... end
--- etc.
+-- Lista de minerales para detección
+local oreTypes = {
+    "minecraft:coal_ore", "minecraft:deepslate_coal_ore",
+    "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
+    "minecraft:copper_ore", "minecraft:deepslate_copper_ore",
+    "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
+    "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore",
+    "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
+    "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
+    "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore",
+    "minecraft:ancient_debris"
+}
 
--- Crear ruta base de túnel: perfora y limpia un túnel recto en X
+-- Utilidades existentes (asumiendo que ya están en tu archivo)
+local androidApi = rawget(_G, "android")
+local function report(...) ... end
+local function callApi(...) ... end
+local function stashHeldItem() ... end
+local function autoRefuel() ... end
+local function placeLight(...) ... end
+
+-- Ver si hay minerales en el área cercana (simplificado)
+local function mineralDetected()
+    local ok, found = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, oreTypes[1])
+    -- Si no devuelve, asumimos que no hay mineral detectable de momento
+    if not ok or type(found) ~= "table" or #found == 0 then
+        return false
+    end
+    return true
+end
+
+-- Crear túnel recto en X
 local function tunnelSegment(length)
-    -- Supongamos que ya estamos posicionados en el inicio del segmento
     for i = 1, length do
-        -- Coordenadas absolutas del bloque a perforar en este paso
-        -- Ajusta baseX/baseY/baseZ según tu sistema de movimiento real
         local baseX, baseY, baseZ = i - 1, 0, 0
-
         for dz = -math.floor(tunnelConfig.tunnelWidth / 2),
-                math.floor(tunnelConfig.tunnelWidth / 2) do
+                  math.floor(tunnelConfig.tunnelWidth / 2) do
             for dy = 0, tunnelConfig.tunnelHeight - 1 do
-                local x = baseX
-                local y = dy
-                local z = baseZ + dz
-                -- Perforar (si es necesario) el bloque en (x,y,z)
+                local x, y, z = baseX, dy, baseZ + dz
                 if not callApi("breakBlock", androidApi and androidApi.breakBlock, x, y, z) then
                     return false
                 end
             end
         end
-
-        -- Avanza la posición del jugador/bot en el mundo si tienes control de movimiento
-        -- Si no tienes una función de movimiento, este bloque puede ser opcional o simulado
+        if not autoRefuel() then return false end
+        -- Mover al siguiente paso si tienes control de movimiento (opcional)
         -- moveForward(1)
-        -- Puedes añadir un chequeo de combustible
-        if not autoRefuel() then
-            return false
-        end
     end
     return true
 end
 
--- Crear una sala de tamaño 16x16x16 centrada en (cx, cy, cz)
+-- Crear sala centrada alrededor del centro
 local function createRoomAt(cx, cy, cz, size)
     local w, h, d = size.w, size.h, size.d
-    -- Rango de la sala alrededor del centro
     local x0 = cx - math.floor(w / 2)
     local x1 = cx + math.floor(w / 2)
     local y0 = cy - math.floor(h / 2)
@@ -62,7 +74,6 @@ local function createRoomAt(cx, cy, cz, size)
     for x = x0, x1 do
         for y = y0, y1 do
             for z = z0, z1 do
-                -- Si el bloque es sólido, lo perforamos para crear la sala
                 if not callApi("breakBlock", androidApi and androidApi.breakBlock, x, y, z) then
                     return false
                 end
@@ -70,88 +81,74 @@ local function createRoomAt(cx, cy, cz, size)
         end
     end
 
-    -- Iluminación básica en esquinas centrales de cada cara
-    placeLight = function(xx, yy, zz, kind)
-        -- Reutiliza tu API de iluminación si tienes una
-        if not callApi("placeBlock/light", androidApi and androidApi.placeBlock, xx, yy, zz, kind) then
-            -- Si no tienes función de iluminación, puedes omitir
-        end
+    -- Iluminación básica en puntos interiores
+    local lights = {
+        {x = x0 + 2, y = y0 + 2, z = z0 + 2},
+        {x = x1 - 2, y = y0 + 2, z = z1 - 2},
+        {x = x0 + 2, y = y0 + 2, z = z1 - 2},
+        {x = x1 - 2, y = y0 + 2, z = z0 + 2},
+    }
+    for _, L in ipairs(lights) do
+        placeLight(L.x, L.y, L.z, "minecraft:torch")
     end
-
-    -- Coloca antorchas en esquinas interiores de la sala
-    local lx = x0 + 2
-    local hx = x1 - 2
-    local ly = y0 + 2
-    local hz = z0 + 2
-    local hz2 = z1 - 2
-    placeLight(lx, ly, hz, "minecraft:torch")
-    placeLight(lx, ly, hz2, "minecraft:torch")
-    placeLight(hx, ly, hz, "minecraft:torch")
-    placeLight(hx, ly, hz2, "minecraft:torch")
 
     return true
 end
 
 -- Crear túneles y salas a izquierda y derecha respecto al túnel
 local function tunnelAndRooms()
-    -- Supón que ya estamos al inicio del túnel en coordenadas (0,0,0)
-    -- Túnel recto de longitud tunnelLength
     if not tunnelSegment(tunnelConfig.tunnelLength) then
         return false
     end
 
-    -- Después de cada tramo, crear salas a izquierda y derecha respecto al eje Z
-    -- Usaremos posiciones relativas a lo largo del túnel:
+    -- Crear salas a intervalos a izquierda y derecha
     local tramo = 0
-    local paso = 16 -- cada cuánto crear una sala (p. ej. cada 16 bloques de longitud)
+    local paso = 16 -- cada cuántos bloques se genera una sala
+
     while tramo < tunnelConfig.tunnelLength do
         tramo = tramo + paso
 
-        -- Centro de la sala a la izquierda (Z menor)
+        -- Coordenadas de sala izquierda
         local leftCX = tramo
-        local leftCY = 8 -- altura media de la sala
-        local leftCZ = -tunnelConfig.tunnelWidth - math.floor(tunnelConfig.roomOffsetZ / 2)
+        local leftCY = 8
+        local leftCZ = -math.floor(tunnelConfig.tunnelWidth / 2) - 8
 
-        -- Centro de la sala a la derecha (Z mayor)
+        -- Coordenadas de sala derecha
         local rightCX = tramo
         local rightCY = 8
-        local rightCZ =  tunnelConfig.tunnelWidth + math.floor(tunnelConfig.roomOffsetZ / 2)
+        local rightCZ =  math.floor(tunnelConfig.tunnelWidth / 2) + 8
 
-        -- Crear sala izquierda
         if not createRoomAt(leftCX, leftCY, leftCZ, tunnelConfig.roomSize) then
             return false
         end
-
-        -- Crear sala derecha
         if not createRoomAt(rightCX, rightCY, rightCZ, tunnelConfig.roomSize) then
             return false
         end
 
-        -- Recarga durante el progreso
-        if not autoRefuel() then
-            return false
+        -- Detección de minerales: si no hay, seguimos; si hay, podemos ajustar
+        if mineralDetected() then
+            report("Minerales detectados en tramo " .. tostring(tramo))
+        else
+            report("Sin minerales detectados en tramo " .. tostring(tramo))
         end
-        -- Opcional: registrar progreso o mapa de exploración
+
+        if not autoRefuel() then return false end
     end
 
-    return true
-end
-
--- Función de entrada para iniciar el proceso completo
-local function empezarTunelesYSalas()
-    -- Preparar estado inicial si es necesario
-    -- Posicionar solución: si ya hemos perforado un tramo, adaptamos la posición
-
-    if not tunnelAndRooms() then
-        report("Fallo al generar túneles o salas.")
-        return false
-    end
-
-    report("Túneles rectos con salas de 16x16 creados exitosamente a izquierda y derecha.")
     return true
 end
 
 -- Inicio
+local function empezarTunelesYSalas()
+    if not tunnelAndRooms() then
+        report("Fallo al generar túneles o salas.")
+        return false
+    end
+    report("Túneles rectos con salas 16x16 a izquierda y derecha creados exitosamente.")
+    return true
+end
+
+-- Ejecutar
 local function main()
     local ok = empezarTunelesYSalas()
     if not ok then
@@ -159,5 +156,4 @@ local function main()
     end
 end
 
--- Ejecutar
 main()
