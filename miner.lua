@@ -1,167 +1,217 @@
--- Lua script for CC-Androids: Mine ores, place torches, deposit loot in nearest chest, and report failures
+-- CC-Androids exposes its functions through the `android` API table.
+local androidApi = rawget(_G, "android")
 
--- Helper function to check API call results
-local function checkResult(result, action)
-    if result[1] then
-        -- result[1] is true when the call failed, result[2] contains error message
-        sendChatMessage(action .. " failed: " .. tostring(result[2]))
-        return false
+local function report(message)
+    message = tostring(message)
+    if type(androidApi) == "table" and type(androidApi.sendChatMessage) == "function" then
+        local ok, err = pcall(androidApi.sendChatMessage, message)
+        if ok then return true end
+        print("No se pudo enviar al chat: " .. tostring(err))
+    else
+        print("API android no disponible; aviso: " .. message)
     end
-    return true
-end
-
--- Auto‑refuel with redstone when fuel is low
-local fuelChecksSinceRefuel = 0
-local fuelApiWarningSent = false
-
-local function stashHeldItem()
-    local ok, hand = pcall(getHandInfo, "right")
-    if not ok then
-        sendChatMessage("No se pudo revisar la mano: " .. tostring(hand))
-        return false
-    end
-
-    local itemName = type(hand) == "table" and hand[1] or hand
-    if itemName == nil or itemName == false or itemName == "air" or itemName == "minecraft:air" then
-        return true
-    end
-
-    for slot = 0, 8 do
-        local slotOk, slotInfo = pcall(getSlotInfo, slot)
-        if not slotOk then
-            sendChatMessage("No se pudo revisar el slot " .. slot .. ": " .. tostring(slotInfo))
-            return false
-        end
-        if slotInfo == false or slotInfo == nil or slotInfo == "air" or slotInfo == "minecraft:air" then
-            local storeOk, result = pcall(storeItem, slot)
-            if not storeOk then
-                sendChatMessage("No se pudo guardar el objeto de la mano: " .. tostring(result))
-                return false
-            end
-            return checkResult(result, "storeItem")
-        end
-    end
-
-    sendChatMessage("No hay slots libres para guardar el objeto de la mano.")
     return false
 end
 
-local function autoRefuel()
-    local shouldRefuel
-
-    if type(fuelLevel) == "function" then
-        local ok, fuel = pcall(fuelLevel)
-        if not ok or type(fuel) ~= "number" then
-            sendChatMessage("No se pudo consultar el combustible: " .. tostring(fuel))
-            return false
-        end
-        shouldRefuel = fuel < 10
-    else
-        -- Some CC-Androids versions omit fuelLevel(). In that case, refuel
-        -- conservatively at startup and then every four mining operations.
-        fuelChecksSinceRefuel = fuelChecksSinceRefuel + 1
-        shouldRefuel = fuelChecksSinceRefuel == 1 or fuelChecksSinceRefuel >= 4
-        if not fuelApiWarningSent then
-            sendChatMessage("Aviso: fuelLevel() no esta disponible; usare recarga periodica con redstone.")
-            fuelApiWarningSent = true
-        end
-    end
-
-    if shouldRefuel then
-        if not stashHeldItem() then return false end
-        local ok, result = pcall(pickup, "minecraft:redstone")
-        if not ok then
-            sendChatMessage("No se pudo recoger redstone: " .. tostring(result))
-            return false
-        end
-        if not checkResult(result, "pickup redstone") then return false end
-
-        ok, result = pcall(refuel)
-        if not ok then
-            sendChatMessage("Fallo al recargar combustible: " .. tostring(result))
-            return false
-        end
-        if not checkResult(result, "refuel") then return false end
-
-        fuelChecksSinceRefuel = 0
-    end
-    return true
-end
-
--- List of ore types to mine
-local oreTypes = {
-    "minecraft:iron_ore",
-    "minecraft:gold_ore",
-    "minecraft:diamond_ore",
-    "minecraft:emerald_ore",
-    "minecraft:lapis_ore",
-    "minecraft:coal_ore",
-    "minecraft:netherite_ore",
-    "minecraft:deepslate_iron_ore",
-    "minecraft:deepslate_gold_ore",
-    "minecraft:deepslate_diamond_ore",
-    "minecraft:deepslate_emerald_ore",
-    "minecraft:deepslate_lapis_ore",
-    "minecraft:deepslate_coal_ore"
-}
-
--- Function to mine all ores of a given type
-local function mineOre(type)
-    local blocks = getBlocksOfType(type)
-    if not blocks or #blocks == 0 then
-        return true -- nothing to mine
-    end
-    for _, b in ipairs(blocks) do
-        if not autoRefuel() then return false end
-        if not checkResult(breakBlock(b.x, b.y, b.z), "breakBlock") then return false end
-        local torchPos = {x = b.x, y = b.y - 1, z = b.z}
-        -- Preserve the current hand item instead of dropping it.
-        if not stashHeldItem() then return false end
-        if not checkResult(pickup("minecraft:torch"), "pickup torch") then return false end
-        if not checkResult(useBlock(torchPos.x, torchPos.y, torchPos.z), "useBlock torch") then return false end
-    end
-    return true
-end
-
--- Function to deposit all loot into the nearest chest
-local function depositLoot()
-    local chests = getBlocksOfType("minecraft:chest")
-    if not chests or #chests == 0 then
-        sendChatMessage("No chest found to deposit loot.")
+-- API actions return (failed, errorMessage), or throw a Lua error.
+local function callApi(action, fn, ...)
+    if type(fn) ~= "function" then
+        report("No existe android." .. action .. "; ejecuta el programa en la terminal del Android.")
         return false
     end
-    local chest = chests[1]
+    local ok, first, second = pcall(fn, ...)
+    if not ok then
+        report(action .. " fallo: " .. tostring(first))
+        return false
+    end
+    if first == true then
+        report(action .. " fallo: " .. tostring(second or "error sin detalle"))
+        return false
+    end
+    return true, first, second
+end
+
+local function handIsOccupied()
+    local ok, name, count = callApi("getHandInfo", androidApi and androidApi.getHandInfo, "right")
+    if not ok then return nil end
+    if type(count) == "number" then return count > 0 end
+    return name ~= nil and name ~= false and name ~= "air" and name ~= "Air"
+end
+
+-- getSlotInfo returns "empty" for an empty stash slot, otherwise false, name.
+local function getStashItemName(index)
+    local ok, first, second = callApi("getSlotInfo", androidApi and androidApi.getSlotInfo, index)
+    if not ok then return nil, false end
+    if first == "empty" or first == nil then return nil, true end
+    if first == false then return second, true end
+    return first, true
+end
+
+local function stashHeldItem()
+    local occupied = handIsOccupied()
+    if occupied == nil then return false end
+    if not occupied then return true end
+
     for slot = 0, 8 do
-        local info = getSlotInfo(slot)
-        if info and info ~= false then
-            local hand = getHandInfo("right")
-            if hand and hand[1] ~= "air" then
-                if not checkResult(dropItem(), "dropItem") then return false end
-            end
-            if not checkResult(equipSlot(slot), "equipSlot") then return false end
-            if not checkResult(storeHeldItemInContainer(chest.x, chest.y, chest.z, slot), "storeHeldItemInContainer") then return false end
+        local name, valid = getStashItemName(slot)
+        if not valid then return false end
+        if name == nil or name == "" then
+            return callApi("storeItem", androidApi and androidApi.storeItem, slot)
         end
+    end
+    report("No hay espacio libre en el inventario del Android para guardar lo que tiene en la mano.")
+    return false
+end
+
+local function findStashSlot(fragment)
+    for slot = 0, 8 do
+        local name, valid = getStashItemName(slot)
+        if not valid then return nil end
+        if name and string.find(string.lower(tostring(name)), fragment, 1, true) then
+            return slot
+        end
+    end
+end
+
+local function autoRefuel()
+    local ok, fuel = callApi("fuelLevel", androidApi and androidApi.fuelLevel)
+    if not ok then return false end
+    if type(fuel) ~= "number" then
+        report("android.fuelLevel() no devolvio un numero.")
+        return false
+    end
+    if fuel >= 10 then return true end
+
+    if not stashHeldItem() then return false end
+    local redstoneSlot = findStashSlot("redstone")
+    if redstoneSlot ~= nil then
+        if not callApi("equipSlot", androidApi and androidApi.equipSlot, redstoneSlot) then return false end
+    else
+        -- pickup searches for a dropped item nearby; it cannot equip stash items.
+        if not callApi("pickup", androidApi and androidApi.pickup, "minecraft:redstone") then
+            report("Combustible bajo y no encontre redstone en el inventario ni en el suelo.")
+            return false
+        end
+    end
+
+    if not callApi("refuel", androidApi and androidApi.refuel) then return false end
+    return stashHeldItem()
+end
+
+local oreTypes = {
+    "minecraft:coal_ore", "minecraft:deepslate_coal_ore",
+    "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
+    "minecraft:copper_ore", "minecraft:deepslate_copper_ore",
+    "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
+    "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore",
+    "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
+    "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
+    "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore",
+    "minecraft:ancient_debris"
+}
+
+local function equipTorch()
+    if not stashHeldItem() then return false end
+    local torchSlot = findStashSlot("torch")
+    if torchSlot ~= nil then
+        return callApi("equipSlot", androidApi and androidApi.equipSlot, torchSlot)
+    end
+    return callApi("pickup", androidApi and androidApi.pickup, "minecraft:torch")
+end
+
+local function mineOre(oreType)
+    local ok, blocks = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, oreType)
+    if not ok then return false end
+    if type(blocks) ~= "table" then return true end
+
+    for _, block in ipairs(blocks) do
+        if not autoRefuel() then return false end
+        if not callApi("breakBlock", androidApi and androidApi.breakBlock, block.x, block.y, block.z) then return false end
+        if not equipTorch() then return false end
+        if not callApi("useBlock", androidApi and androidApi.useBlock, block.x, block.y - 1, block.z) then return false end
     end
     return true
 end
 
--- Main execution
-if not autoRefuel() then return end
-if not mineOre("minecraft:iron_ore") then return end
-if not mineOre("minecraft:gold_ore") then return end
-if not mineOre("minecraft:diamond_ore") then return end
-if not mineOre("minecraft:emerald_ore") then return end
-if not mineOre("minecraft:lapis_ore") then return end
-if not mineOre("minecraft:coal_ore") then return end
-if not mineOre("minecraft:netherite_ore") then return end
-if not mineOre("minecraft:deepslate_iron_ore") then return end
-if not mineOre("minecraft:deepslate_gold_ore") then return end
-if not mineOre("minecraft:deepslate_diamond_ore") then return end
-if not mineOre("minecraft:deepslate_emerald_ore") then return end
-if not mineOre("minecraft:deepslate_lapis_ore") then return end
-if not mineOre("minecraft:deepslate_coal_ore") then return end
+local function distanceSquared(a, b)
+    local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+    return dx * dx + dy * dy + dz * dz
+end
 
--- After mining, deposit loot
-if not depositLoot() then return end
+local function findNearestChest()
+    local ok, chests = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, "minecraft:chest")
+    if not ok then return nil end
+    if type(chests) ~= "table" or #chests == 0 then return nil end
 
-sendChatMessage("Mining and loot deposit completed.")
+    local selfOk, selfInfo = callApi("getSelf", androidApi and androidApi.getSelf)
+    if not selfOk or type(selfInfo) ~= "table" then return nil end
+    local origin = {x = selfInfo.posX, y = selfInfo.posY, z = selfInfo.posZ}
+    local nearest, bestDistance
+    for _, chest in ipairs(chests) do
+        local distance = distanceSquared(origin, chest)
+        if bestDistance == nil or distance < bestDistance then
+            nearest, bestDistance = chest, distance
+        end
+    end
+    return nearest
+end
+
+local function findEmptyChestSlot(chest)
+    local ok, info = callApi("getContainerInfo", androidApi and androidApi.getContainerInfo, chest.x, chest.y, chest.z)
+    if not ok or type(info) ~= "table" then return nil end
+    if info.locked then
+        report("El cofre mas cercano esta bloqueado.")
+        return nil
+    end
+    local slots = info.slots
+    if type(slots) ~= "table" then return nil end
+    for index, item in ipairs(slots) do
+        local name = type(item) == "table" and item[1] or nil
+        local count = type(item) == "table" and item[2] or nil
+        if count == 0 or name == nil or name == "Air" or name == "air" or name == "empty" then
+            return index - 1
+        end
+    end
+    return nil
+end
+
+local function depositLoot()
+    local chest = findNearestChest()
+    if not chest then
+        report("No encontre un cofre visible cerca para depositar el botin.")
+        return false
+    end
+
+    for slot = 0, 8 do
+        local itemName, valid = getStashItemName(slot)
+        if not valid then return false end
+        if itemName then
+            if not stashHeldItem() then return false end
+            if not callApi("equipSlot", androidApi and androidApi.equipSlot, slot) then return false end
+            local chestSlot = findEmptyChestSlot(chest)
+            if chestSlot == nil then
+                report("El cofre cercano esta lleno o no pude leer sus espacios.")
+                return false
+            end
+            if not callApi("storeHeldItemInContainer", androidApi and androidApi.storeHeldItemInContainer,
+                chest.x, chest.y, chest.z, chestSlot) then return false end
+        end
+    end
+    return stashHeldItem()
+end
+
+local function main()
+    if type(androidApi) ~= "table" then
+        report("Este programa debe ejecutarse desde la computadora integrada en un Android CC-Androids.")
+        return
+    end
+    if not autoRefuel() then return end
+    for _, oreType in ipairs(oreTypes) do
+        if not mineOre(oreType) then return end
+    end
+    if not depositLoot() then return end
+    report("Mineria terminada y botin depositado.")
+end
+
+local ok, err = xpcall(main, function(message) return tostring(message) end)
+if not ok then report("Proceso detenido por error: " .. tostring(err)) end
