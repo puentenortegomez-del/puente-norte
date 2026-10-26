@@ -1,4 +1,4 @@
--- miner_definitivo_funcional.lua
+-- miner_directo_total.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,55 +19,32 @@ local function esperarTarea()
     end
 end
 
--- Función auxiliar para llamadas a la API
-local function apiCall(func, ...)
-    local ok, res1, res2 = pcall(func, ...)
-    if not ok then return false, res1 end
-    if type(res1) == "table" and res1[1] == true then
-        return false, res1[2]
-    end
-    return true, res1
-end
-
--- Autorecarga directa: prueba equipar cada slot y recargar (sin fallos por nombres de texto)
+-- Recarga directa por prueba de slots (0 al 8) sin fallos de texto
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
         return true
     end
 
-    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
-
-    local slotPico = nil
-    -- Localizamos dónde está el pico para poder devolverlo después
-    for i = 0, 8 do
-        local ok, info = apiCall(android.getSlotInfo, i)
-        if ok and type(info) == "string" and string.find(string.lower(info), "pickaxe") then
-            slotPico = i
-            break
-        end
-    end
+    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando recarga...")
 
     local recargaExitosa = false
 
-    -- Recorremos todos los slots del 0 al 8 probando la recarga directamente
+    -- Recorremos todos los slots del inventario superior (0 al 8)
     for i = 0, 8 do
-        -- Evitamos usar el slot del pico principal si queremos prevenir confusiones, o probamos todos
-        local okEquip = apiCall(android.equipSlot, i)
+        local okEquip = pcall(android.equipSlot, i)
         if okEquip then
-            apiCall(android.refuel)
+            -- Intentamos recargar con el contenido del slot equipado
+            local okRefuel, resRefuel = pcall(android.refuel)
             local nuevoCombustible = android.fuelLevel()
+            
+            -- Si el combustible aumentó, la recarga fue exitosa
             if nuevoCombustible and nuevoCombustible > combustibleActual then
-                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible actual: " .. tostring(nuevoCombustible))
+                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible: " .. tostring(nuevoCombustible))
                 recargaExitosa = true
                 break
             end
         end
-    end
-
-    -- Devolvemos el pico a la mano principal si lo encontramos
-    if slotPico then
-        apiCall(android.equipSlot, slotPico)
     end
 
     if not recargaExitosa then
@@ -81,18 +58,17 @@ end
 -- Colocación inteligente de antorchas
 local function colocarAntorcha(x, y, z)
     for i = 0, 8 do
-        local ok, info = apiCall(android.getSlotInfo, i)
-        if ok and type(info) == "string" and string.find(string.lower(info), "torch") then
-            if apiCall(android.equipSlot, i) then
-                apiCall(android.useBlock, x, y, z)
-                esperarTarea()
-                return
-            end
+        pcall(android.equipSlot, i)
+        local hand = android.getHandInfo("main")
+        if hand and hand.name and string.find(string.lower(hand.name), "torch") then
+            pcall(android.useBlock, x, y, z)
+            esperarTarea()
+            return
         end
     end
 end
 
--- Depositar en el cofre cercano sin importar la distancia (dentro del radio)
+-- Depositar en el cofre cercano sin importar la distancia
 local function depositarEnCofre()
     local cofres = android.getBlocksOfType("chest")
     if cofres and #cofres > 0 then
@@ -100,14 +76,8 @@ local function depositarEnCofre()
         print("Cofre detectado en: " .. cofre.x .. ", " .. cofre.y .. ", " .. cofre.z)
         
         for i = 0, 8 do
-            local ok, info = apiCall(android.getSlotInfo, i)
-            if ok and info and type(info) == "string" then
-                local itemLower = string.lower(info)
-                if not string.find(itemLower, "pickaxe") and not string.find(itemLower, "redstone") then
-                    apiCall(android.equipSlot, i)
-                    apiCall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
-                end
-            end
+            pcall(android.equipSlot, i)
+            pcall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
         end
         print("Loot depositado en el cofre.")
     end
@@ -118,8 +88,8 @@ local function minarBloque(x, y, z)
         error("El androide se ha quedado sin combustible y no hay redstone disponible.")
     end
 
-    local ok, res = apiCall(android.breakBlock, x, y, z)
-    if not ok then
+    local ok, res = pcall(android.breakBlock, x, y, z)
+    if not ok or (type(res) == "table" and res[1] == true) then
         return false
     end
     esperarTarea()
@@ -155,8 +125,8 @@ local function main()
         if not minarBloque(x, Y1, Z2) then return end
         if not minarBloque(x, Y2, Z2) then return end
 
-        local ok, res = apiCall(android.moveTo, x, Y1, Z1)
-        if not ok then
+        local ok, res = pcall(android.moveTo, x, Y1, Z1)
+        if not ok or (type(res) == "table" and res[1] == true) then
             print("No se pudo avanzar.")
             return
         end
