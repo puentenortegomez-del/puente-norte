@@ -1,93 +1,116 @@
+-- miner.lua (Corregido)
+-- CC:Androids 1.3.0 | Minecraft 1.20.1
+-- Túnel 2x2 hacia X negativo
 
--- miner.lua
--- CC:Androids 1.3.0 / Forge 1.20.1
--- Tunel 2x2 hacia X negativo
+local android = _G.android
 
-local a = _G.android
+-- Coordenadas Z y Y fijas del túnel 2x2
+local Z1 = -801
+local Z2 = -802
+local Y1 = 33
+local Y2 = 34
 
-local Z1, Z2 = -801, -802
-local Y1, Y2 = 33, 34
 local LONGITUD = 100
-local TIMEOUT = 30
+local PAUSA = 0.1
 
-local function posicion()
-    local p = a.getSelf()
-    return math.floor(p.posX), math.floor(p.posY), math.floor(p.posZ)
+-- Función auxiliar para verificar si una función de la API devolvió un error en tabla
+local function verificarError(nombre, res1, res2)
+    -- Si la función devuelve una tabla con true en la primera posición, es un error de la API
+    if type(res1) == "table" and res1[1] == true then
+        print("Error en " .. nombre .. ": " .. tostring(res1[2]))
+        return false
+    -- Si pcall atrapó un error de Lua
+    elseif not res1 then
+        print("Error en " .. nombre .. ": " .. tostring(res2))
+        return false
+    end
+    return true
 end
 
-local function esperarFin(timeout)
+-- Espera inteligente a que el androide termine su tarea actual
+local function esperarTarea()
+    -- Pequeña pausa inicial para dar tiempo a que el juego registre la orden
+    sleep(PAUSA)
+    
     local inicio = os.clock()
-    local activa = false
-
-    repeat
-        sleep(0.2)
-        local tarea = a.currentTask()
-
-        if tarea ~= "idle" then
-            activa = true
-        elseif activa then
-            return true
+    -- Espera activa mientras el androide esté ocupado rompiendo o moviéndose
+    while true do
+        local tarea = android.currentTask()
+        if tarea == "idle" then
+            break
         end
-    until os.clock() - inicio >= timeout
-
-    return a.currentTask() == "idle" and activa
-end
-
-local function ejecutar(nombre, funcion, x, y, z)
-    a.cancelTask()
-    sleep(0.2)
-
-    local ok, resultado = pcall(funcion, x, y, z)
-
-    if not ok then
-        error(nombre .. ": " .. tostring(resultado))
-    end
-
-    if type(resultado) == "table" and resultado[1] == true then
-        error(nombre .. ": " .. tostring(resultado[2]))
-    end
-
-    local tareaInicial = a.currentTask()
-
-    if tareaInicial == "idle" then
-        error(nombre .. ": CC:Androids no ha iniciado la tarea. Comprueba que el bloque objetivo sea sólido y alcanzable: " .. x .. "," .. y .. "," .. z)
-    end
-
-    if not esperarFin(TIMEOUT) then
-        a.cancelTask()
-        error(nombre .. ": tiempo agotado en " .. x .. "," .. y .. "," .. z)
+        
+        -- Timeout de seguridad por si se queda atascado (10 segundos máx por bloque/movimiento)
+        if os.clock() - inicio > 10 then
+            print("Aviso: Timeout esperando tarea, continuando...")
+            break
+        end
+        
+        sleep(PAUSA)
     end
 end
 
-local function minar(x, y, z)
-    ejecutar("Minado", a.breakBlock, x, y, z)
+local function minarBloque(x, y, z)
+    -- breakBlock(x, y, z) se mueve al bloque y lo rompe (requiere combustible)
+    local ok, res = pcall(android.breakBlock, x, y, z)
+    
+    if not verificarError("minado " .. x .. "," .. y .. "," .. z, ok, res) then
+        return false
+    end
+    
+    esperarTarea()
+    return true
+end
+
+local function minarSeccion(x)
+    -- Columna 1
+    if not minarBloque(x, Y1, Z1) then return false end
+    if not minarBloque(x, Y2, Z1) then return false end
+
+    -- Columna 2
+    if not minarBloque(x, Y1, Z2) then return false end
+    if not minarBloque(x, Y2, Z2) then return false end
+
+    return true
 end
 
 local function main()
-    local p = a.getSelf()
-    local xInicial = math.floor(p.posX)
-
-    print("MINER: tunel 2x2 hacia X negativo")
-    print("Inicio X=" .. xInicial .. " Y=" .. p.posY .. " Z=" .. p.posZ)
-
-    for x = xInicial - 1, xInicial - LONGITUD, -1 do
-        print("Minando X=" .. x)
-
-        minar(x, Y1, Z1)
-        minar(x, Y2, Z1)
-        minar(x, Y1, Z2)
-        minar(x, Y2, Z2)
-
-        -- Solo avanza después de minar las cuatro posiciones.
-        ejecutar("Movimiento", a.moveTo, x, Y1, Z1)
+    local posicion = android.getSelf()
+    if not posicion or not posicion.posX then
+        error("No se pudo obtener la posición del androide. ¿Está cargado el mundo?")
     end
 
-    print("MINER: tunel terminado")
+    local xInicial = math.floor(posicion.posX)
+    local xFinal = xInicial - LONGITUD
+
+    print("=== MINER INICIADO ===")
+    print("Dirección: X negativo")
+    print("Carriles Z: " .. Z1 .. " y " .. Z2)
+    print("Alturas Y: " .. Y1 .. " y " .. Y2)
+    print("Desde X=" .. xInicial .. " hasta X=" .. xFinal)
+
+    for x = xInicial - 1, xFinal, -1 do
+        print("Excavando sección X=" .. x)
+
+        if not minarSeccion(x) then
+            print("Miner detenido por un error al minar.")
+            return
+        end
+
+        -- Opcional: Avanzar de posición al terminar la columna usando moveTo
+        local ok, res = pcall(android.moveTo, x, Y1, Z1)
+        if not verificarError("movimiento a X=" .. x, ok, res) then
+            print("No se pudo avanzar, deteniendo minero.")
+            return
+        end
+        esperarTarea()
+    end
+
+    print("=== TÚNEL TERMINADO ===")
 end
 
 local ok, err = pcall(main)
 
 if not ok then
-    a.cancelTask()
-    print("MINER DETENIDO: " .. tostring(err))
+    print("ERROR FATAL: " .. tostring(err))
 end
