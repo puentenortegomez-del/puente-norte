@@ -1,4 +1,4 @@
--- miner_definitivo_mano.lua
+-- miner_definitivo_fijo.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,7 +19,20 @@ local function esperarTarea()
     end
 end
 
--- Autorecarga liberando la mano principal (pico) para poder equipar la redstone
+-- Función auxiliar segura para llamadas a la API de CC:Androids
+local function apiCall(func, ...)
+    local ok, res1, res2 = pcall(func, ...)
+    if not ok then
+        return false, res1 -- Error de Lua
+    end
+    -- Si la API devuelve una tabla con true en la primera posición, es un error
+    if type(res1) == "table" and res1[1] == true then
+        return false, res1[2]
+    end
+    return true, res1
+end
+
+-- Autorecarga infalible manejando correctamente las respuestas de error de la API
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
@@ -28,10 +41,11 @@ local function comprobarYRecargar()
 
     print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
 
-    -- 1. Encontrar un slot vacío para guardar temporalmente lo que tenga en la mano (el pico)
+    -- 1. Encontrar un slot vacío para guardar temporalmente el pico de la mano principal
     local slotVacio = nil
     for i = 0, 8 do
-        local ok, info = pcall(android.getSlotInfo, i)
+        local ok, info = apiCall(android.getSlotInfo, i)
+        -- Si getSlotInfo falla o devuelve vacío/nil, el slot está libre
         if not ok or info == false or info == nil or info == "" then
             slotVacio = i
             break
@@ -40,38 +54,38 @@ local function comprobarYRecargar()
 
     local slotPico = nil
     if slotVacio then
-        -- Guardamos el ítem de la mano principal en el slot vacío
-        local okStore = pcall(android.storeItem, slotVacio)
+        local okStore = apiCall(android.storeItem, slotVacio)
         if okStore then
             slotPico = slotVacio
             print("Pico guardado temporalmente en el slot " .. slotPico)
         end
     end
 
-    -- 2. Buscar redstone barriendo los slots del 0 al 8
-    local recargaExitosas = false
+    local recargaExitosa = false
+
+    -- 2. Barrer los slots del 0 al 8 para encontrar redstone y recargar
     for i = 0, 8 do
         if i ~= slotPico then
-            local okEquip = pcall(android.equipSlot, i)
+            local okEquip = apiCall(android.equipSlot, i)
             if okEquip then
-                local okRefuel = pcall(android.refuel)
+                apiCall(android.refuel)
                 local nuevoCombustible = android.fuelLevel()
                 if nuevoCombustible and nuevoCombustible > combustibleActual then
                     print("¡Recarga exitosa desde el slot " .. i .. "! Combustible: " .. tostring(nuevoCombustible))
-                    recargaExitosas = true
+                    recargaExitosa = true
                     break
                 end
             end
         end
     end
 
-    -- 3. Volver a equipar el pico en la mano principal para que pueda seguir minando
+    -- 3. Devolver el pico a la mano principal
     if slotPico then
-        pcall(android.equipSlot, slotPico)
+        apiCall(android.equipSlot, slotPico)
         print("Pico devuelto a la mano principal.")
     end
 
-    if not recargaExitosas then
+    if not recargaExitosa then
         print("¡ADVERTENCIA! No se pudo encontrar redstone para recargar.")
         return false
     end
@@ -82,12 +96,13 @@ end
 -- Colocación inteligente de antorchas
 local function colocarAntorcha(x, y, z)
     for i = 0, 8 do
-        pcall(android.equipSlot, i)
-        local hand = android.getHandInfo("main")
-        if hand and hand.name and string.find(string.lower(hand.name), "torch") then
-            pcall(android.useBlock, x, y, z)
-            esperarTarea()
-            return
+        if apiCall(android.equipSlot, i) then
+            local hand = android.getHandInfo("main")
+            if hand and hand.name and string.find(string.lower(hand.name), "torch") then
+                apiCall(android.useBlock, x, y, z)
+                esperarTarea()
+                return
+            end
         end
     end
 end
@@ -100,8 +115,9 @@ local function depositarEnCofre()
         print("Cofre detectado en: " .. cofre.x .. ", " .. cofre.y .. ", " .. cofre.z)
         
         for i = 0, 8 do
-            pcall(android.equipSlot, i)
-            pcall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
+            if apiCall(android.equipSlot, i) then
+                apiCall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
+            end
         end
         print("Loot depositado en el cofre.")
     end
@@ -112,8 +128,8 @@ local function minarBloque(x, y, z)
         error("El androide se ha quedado sin combustible y no hay redstone disponible.")
     end
 
-    local ok, res = pcall(android.breakBlock, x, y, z)
-    if not ok or (type(res) == "table" and res[1] == true) then
+    local ok, res = apiCall(android.breakBlock, x, y, z)
+    if not ok then
         return false
     end
     esperarTarea()
@@ -149,8 +165,8 @@ local function main()
         if not minarBloque(x, Y1, Z2) then return end
         if not minarBloque(x, Y2, Z2) then return end
 
-        local ok, res = pcall(android.moveTo, x, Y1, Z1)
-        if not ok or (type(res) == "table" and res[1] == true) then
+        local ok, res = apiCall(android.moveTo, x, Y1, Z1)
+        if not ok then
             print("No se pudo avanzar.")
             return
         end
