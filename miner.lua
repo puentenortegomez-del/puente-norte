@@ -1,4 +1,4 @@
--- miner_final_funcional.lua
+-- miner_definitivo_seguro.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,7 +19,7 @@ local function esperarTarea()
     end
 end
 
--- Función auxiliar para verificar errores de la API
+-- Función auxiliar segura para llamadas a la API de CC:Androids
 local function apiCall(func, ...)
     local ok, res1, res2 = pcall(func, ...)
     if not ok then return false, res1 end
@@ -29,7 +29,7 @@ local function apiCall(func, ...)
     return true, res1
 end
 
--- Autorecarga de redstone (requiere la mano principal libre o que equipSlot pueda tomar el slot)
+-- Autorecarga inteligente que filtra herramientas y busca redstone
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
@@ -38,29 +38,72 @@ local function comprobarYRecargar()
 
     print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
 
-    -- Recorremos los slots del inventario del 0 al 8 para encontrar redstone y recargar
+    local slotRedstone = nil
+
+    -- 1. Buscamos inteligentemente el slot que contenga redstone (evitando picos y herramientas)
     for i = 0, 8 do
-        local okEquip = apiCall(android.equipSlot, i)
-        if okEquip then
-            apiCall(android.refuel)
-            local nuevoCombustible = android.fuelLevel()
-            if nuevoCombustible and nuevoCombustible > combustibleActual then
-                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible actual: " .. tostring(nuevoCombustible))
-                return true
+        local ok, info = apiCall(android.getSlotInfo, i)
+        if ok and type(info) == "string" then
+            local nombreItem = string.lower(info)
+            -- Verificamos que sea redstone y NO una herramienta
+            if string.find(nombreItem, "redstone") and not string.find(nombreItem, "pickaxe") then
+                slotRedstone = i
+                print("Redstone localizada en el slot " .. i)
+                break
             end
         end
     end
 
-    print("¡ADVERTENCIA! No se encontró redstone disponible para recargar.")
+    -- Si no se encontró por nombre exacto, probamos slots que no sean herramientas
+    if not slotRedstone then
+        for i = 0, 8 do
+            local ok, info = apiCall(android.getSlotInfo, i)
+            if ok and type(info) == "string" then
+                local nombreItem = string.lower(info)
+                if not string.find(nombreItem, "pickaxe") and not string.find(nombreItem, "axe") and not string.find(nombreItem, "shovel") and not string.find(nombreItem, "torch") then
+                    slotRedstone = i
+                    break
+                end
+            end
+        end
+    end
+
+    if not slotRedstone then
+        print("¡ADVERTENCIA! No se encontró redstone disponible en el inventario.")
+        return false
+    end
+
+    -- 2. Equipamos el slot de redstone y recargamos
+    local okEquip = apiCall(android.equipSlot, slotRedstone)
+    if okEquip then
+        apiCall(android.refuel)
+        local nuevoCombustible = android.fuelLevel()
+        if nuevoCombustible and nuevoCombustible > combustibleActual then
+            print("¡Recarga exitosa! Combustible actual: " .. tostring(nuevoCombustible))
+            
+            -- 3. Intentamos devolver el pico a la mano principal buscando un slot de herramienta si lo hay
+            for j = 0, 8 do
+                local okJ, infoJ = apiCall(android.getSlotInfo, j)
+                if okJ and type(infoJ) == "string" and string.find(string.lower(infoJ), "pickaxe") then
+                    apiCall(android.equipSlot, j)
+                    break
+                end
+            end
+            
+            return true
+        end
+    end
+
+    print("¡ADVERTENCIA! Falló el proceso de recarga.")
     return false
 end
 
 -- Colocación inteligente de antorchas
 local function colocarAntorcha(x, y, z)
     for i = 0, 8 do
-        if apiCall(android.equipSlot, i) then
-            local hand = android.getHandInfo("main")
-            if hand and hand.name and string.find(string.lower(hand.name), "torch") then
+        local ok, info = apiCall(android.getSlotInfo, i)
+        if ok and type(info) == "string" and string.find(string.lower(info), "torch") then
+            if apiCall(android.equipSlot, i) then
                 apiCall(android.useBlock, x, y, z)
                 esperarTarea()
                 return
@@ -69,7 +112,7 @@ local function colocarAntorcha(x, y, z)
     end
 end
 
--- Depositar inventario en cualquier cofre cercano detectado
+-- Depositar en el cofre cercano
 local function depositarEnCofre()
     local cofres = android.getBlocksOfType("chest")
     if cofres and #cofres > 0 then
@@ -77,11 +120,17 @@ local function depositarEnCofre()
         print("Cofre detectado en: " .. cofre.x .. ", " .. cofre.y .. ", " .. cofre.z)
         
         for i = 0, 8 do
-            if apiCall(android.equipSlot, i) then
-                apiCall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
+            local ok, info = apiCall(android.getSlotInfo, i)
+            -- Depositamos todo excepto el pico y la redstone/antorchas si prefieres, o todo el loot
+            if ok and info and type(info) == "string" then
+                local itemLower = string.lower(info)
+                if not string.find(itemLower, "pickaxe") and not string.find(itemLower, "redstone") then
+                    apiCall(android.equipSlot, i)
+                    apiCall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
+                end
             end
         end
-        print("Loot depositado en el cofre con éxito.")
+        print("Loot depositado en el cofre.")
     end
 end
 
