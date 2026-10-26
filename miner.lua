@@ -1,4 +1,4 @@
--- miner_directo_total.lua
+-- miner_funcional_definitivo.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,51 +19,56 @@ local function esperarTarea()
     end
 end
 
--- Recarga directa por prueba de slots (0 al 8) sin fallos de texto
+-- Función de recarga directa y robusta basada puramente en los slots (0 al 8)
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
         return true
     end
 
-    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando recarga...")
+    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
 
-    local recargaExitosa = false
-
-    -- Recorremos todos los slots del inventario superior (0 al 8)
+    -- Recorremos cada slot del inventario superior (0 al 8)
     for i = 0, 8 do
+        -- Intentamos equipar el slot directamente
         local okEquip = pcall(android.equipSlot, i)
         if okEquip then
-            -- Intentamos recargar con el contenido del slot equipado
-            local okRefuel, resRefuel = pcall(android.refuel)
+            -- Intentamos recargar con el ítem equipado
+            pcall(android.refuel)
             local nuevoCombustible = android.fuelLevel()
             
-            -- Si el combustible aumentó, la recarga fue exitosa
+            -- Si el nivel de combustible subió, la recarga fue exitosa
             if nuevoCombustible and nuevoCombustible > combustibleActual then
-                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible: " .. tostring(nuevoCombustible))
-                recargaExitosa = true
-                break
+                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible actual: " .. tostring(nuevoCombustible))
+                
+                -- Buscamos el pico en el inventario para devolverlo a la mano si está disponible
+                for j = 0, 8 do
+                    local okInfo, info = pcall(android.getSlotInfo, j)
+                    if okInfo and type(info) == "string" and string.find(string.lower(info), "pickaxe") then
+                        pcall(android.equipSlot, j)
+                        break
+                    end
+                end
+                
+                return true
             end
         end
     end
 
-    if not recargaExitosa then
-        print("¡ADVERTENCIA! No se pudo recargar desde ningún slot.")
-        return false
-    end
-
-    return true
+    print("¡ADVERTENCIA! No se pudo recargar desde ningún slot.")
+    return false
 end
 
 -- Colocación inteligente de antorchas
 local function colocarAntorcha(x, y, z)
     for i = 0, 8 do
-        pcall(android.equipSlot, i)
-        local hand = android.getHandInfo("main")
-        if hand and hand.name and string.find(string.lower(hand.name), "torch") then
-            pcall(android.useBlock, x, y, z)
-            esperarTarea()
-            return
+        local ok, info = pcall(android.getSlotInfo, i)
+        if ok and type(info) == "string" and string.find(string.lower(info), "torch") then
+            if pcall(android.equipSlot, i) then
+                pcall(android.useBlock, x, y, z)
+                esperarTarea()
+                return
+            end
         end
     end
 end
@@ -76,8 +81,14 @@ local function depositarEnCofre()
         print("Cofre detectado en: " .. cofre.x .. ", " .. cofre.y .. ", " .. cofre.z)
         
         for i = 0, 8 do
-            pcall(android.equipSlot, i)
-            pcall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
+            local ok, info = pcall(android.getSlotInfo, i)
+            if ok and info and type(info) == "string" then
+                local itemLower = string.lower(info)
+                if not string.find(itemLower, "pickaxe") and not string.find(itemLower, "redstone") then
+                    pcall(android.equipSlot, i)
+                    pcall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
+                end
+            end
         end
         print("Loot depositado en el cofre.")
     end
