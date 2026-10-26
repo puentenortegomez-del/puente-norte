@@ -6,12 +6,12 @@ local tunnelConfig = {
     tunnelHeight = 3,        -- altura del túnel (en Y)
     roomSize = {w = 16, h = 16, d = 16}, -- sala 16x16x16
     -- Desplazamientos para las salas respecto al túnel (a izquierda y derecha)
-    leftOffsetZ  = -math.floor(3/2) - 8, -- ajuste para sala izquierda
-    rightOffsetZ =  math.floor(3/2) + 8,  -- ajuste para sala derecha
-    roomInterval = 16            -- distancia entre salas a lo largo del túnel
+    leftOffsetZ  = -8, -- desplazamiento para sala izquierda (ajuste según tu sistema)
+    rightOffsetZ =  8, -- desplazamiento para sala derecha
+    roomInterval = 16   -- distancia entre salas a lo largo del túnel
 }
 
--- Lista de minerales para detección (ejemplo, ajusta a tu API si es necesario)
+-- Lista de minerales para detección (ejemplo)
 local oreTypes = {
     "minecraft:coal_ore","minecraft:iron_ore","minecraft:copper_ore",
     "minecraft:gold_ore","minecraft:redstone_ore","minecraft:lapis_ore",
@@ -20,10 +20,11 @@ local oreTypes = {
 
 -- Utilidades existentes (asegúrate de que existan en tu entorno)
 local androidApi = rawget(_G, "android") -- si tu código expone una API global llamada "android"
+
 local function report(...) 
     -- Usa la función de reporte de tu código; si no existe, imprime
-    if type(select(1, ...)) == "string" then
-        print(table.concat({...}, " "))
+    if type(...) == "table" then
+        print(table.concat(...) )
     else
         print(...)
     end
@@ -46,7 +47,6 @@ end
 
 local function autoRefuel()
     -- Placeholder: reemplaza con tu lógica de recarga
-    -- Si falla, devuelve false para indicar interrupción
     return true
 end
 
@@ -54,17 +54,15 @@ local function placeLight(x, y, z, kind)
     if androidApi and type(androidApi.placeBlock) == "function" then
         return androidApi.placeBlock(x, y, z, kind)
     end
-    -- Si no existe, no haces nada
     return true
 end
 
 -- Detección de minerales en el área cercana (simplificada)
 local function mineralDetected()
     -- Intenta consultar bloques cercanos; si no hay soporte, asume false
-    for _, t in ipairs(oreTypes) do
+    for i, t in ipairs(oreTypes) do
         local ok, found = callApi("getBlockType", androidApi and androidApi.getBlockType, 0, 0, 0)
         if ok and found and found ~= "air" then
-            -- Si encuentras un mineral (simplificado), devuelves true
             return true
         end
     end
@@ -142,15 +140,15 @@ local function tunnelAndRooms()
     while tramo < tunnelConfig.tunnelLength do
         tramo = tramo + paso
 
-        -- Centro de sala izquierda
+        -- Coordenadas de sala izquierda
         local leftCX = tramo
         local leftCY = 8
-        local leftCZ = -math.floor(tunnelConfig.tunnelWidth / 2) -  math.abs(tunnelConfig.leftOffsetZ)
+        local leftCZ = -math.floor(tunnelConfig.tunnelWidth / 2) + tunnelConfig.leftOffsetZ
 
-        -- Centro de sala derecha
+        -- Coordenadas de sala derecha
         local rightCX = tramo
         local rightCY = 8
-        local rightCZ =  math.floor(tunnelConfig.tunnelWidth / 2) +  math.abs(tunnelConfig.rightOffsetZ)
+        local rightCZ =  math.floor(tunnelConfig.tunnelWidth / 2) + tunnelConfig.rightOffsetZ
 
         if not createRoomAt(leftCX, leftCY, leftCZ, tunnelConfig.roomSize) then
             return false
