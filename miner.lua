@@ -1,59 +1,57 @@
 
 -- CC:Androids 1.3.0 - Tunel continuo
--- Forge 1.20.1
--- Direccion: X NEGATIVO
--- Tunel: 3 ancho x 2 alto
--- Suelo: Y=33 (NO ROMPER)
+-- Direccion: X negativo
+-- Seccion: 3 ancho x 2 alto
+-- Suelo: Y=33 (no romper)
 -- Bloques excavados: Y=34 y Y=35
+-- Sin limite de longitud
 
-local android = _G.android
+local a = _G.android
 
-local CFG = {
-    floorY = 33,
-    centerZ = -801,
-    width = 3,
-    height = 2,
-    waitDelay = 0.25,
-    maxWait = 120
-}
+local FLOOR_Y = 33
+local CENTER_Z = -801
+local WIDTH = 3
+local HEIGHT = 2
+local WAIT_DELAY = 0.25
+local MAX_WAIT = 120
 
 local function getPosition()
-    local p = android.getSelf()
+    local p = a.getSelf()
 
     if type(p) ~= "table"
         or p.posX == nil
         or p.posY == nil
         or p.posZ == nil then
-        error("No se pudo obtener la posicion del androide")
+        error("No se pudo leer la posicion del androide")
     end
 
     return p
 end
 
 local function waitIdle()
-    local count = 0
+    local checks = 0
 
-    while count < CFG.maxWait do
+    while checks < MAX_WAIT do
         local ok, task = pcall(function()
-            return android.currentTask()
+            return a.currentTask()
         end)
 
         if ok and task == "idle" then
             return
         end
 
-        sleep(CFG.waitDelay)
-        count = count + 1
+        sleep(WAIT_DELAY)
+        checks = checks + 1
     end
 
-    error("Tiempo agotado esperando a que termine la tarea")
+    error("La tarea anterior no termina")
 end
 
 local function runTask(method, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
-        return android[method](x, y, z)
+        return a[method](x, y, z)
     end)
 
     if not ok then
@@ -67,60 +65,63 @@ local function runTask(method, x, y, z)
     waitIdle()
 end
 
-local function mineFace(x, z)
-    -- Nunca se llama a breakBlock en Y=33.
-    for y = CFG.floorY + 1,
-            CFG.floorY + CFG.height do
+local function mineFace(x, centerZ)
+    -- Excavar exclusivamente Y=34 e Y=35.
+    -- No se rompe ningun bloque en Y=33.
+    for y = FLOOR_Y + 1, FLOOR_Y + HEIGHT do
         for dz = -1, 1 do
             runTask(
                 "breakBlock",
                 x,
                 y,
-                z + dz
+                centerZ + dz
             )
         end
     end
 end
 
 local function main()
+    -- Aceptar la posicion real, sea cual sea su altura.
     local p = getPosition()
-
-    -- Respetar la posicion real del androide.
     local x = p.posX
-    local y = p.posY
     local z = p.posZ
 
-    print("Tunel continuo iniciado")
-    print("Inicio X=" .. tostring(x)
-        .. " Y=" .. tostring(y)
-        .. " Z=" .. tostring(z))
+    print("Mineria continua iniciada")
+    print("Posicion inicial: X=" .. tostring(p.posX)
+        .. " Y=" .. tostring(p.posY)
+        .. " Z=" .. tostring(p.posZ))
     print("Direccion: X negativo")
     print("Suelo protegido: Y=33")
-    print("Excavacion: Y=34 y Y=35")
+    print("Altura excavada: Y=34 y Y=35")
 
     while true do
         local targetX = x - 1
 
-        -- Despejar la siguiente cara.
+        -- Despejar la siguiente cara del tunel.
         mineFace(targetX, z)
 
-        -- Entrar en el tramo despejado manteniendo
-        -- la altura y la profundidad reales.
-        runTask("moveTo", targetX, y, z)
-
+        -- Leer la altura real; no exigir Y=34.
         local current = getPosition()
 
-        if current.posX >= x then
+        runTask(
+            "moveTo",
+            targetX,
+            current.posY,
+            current.posZ
+        )
+
+        local nextPos = getPosition()
+
+        if nextPos.posX >= x then
             error(
-                "El androide no avanzo hacia X negativo. "
+                "No avanzo hacia X negativo. "
                 .. "X anterior=" .. tostring(x)
-                .. ", X actual=" .. tostring(current.posX)
+                .. ", X actual=" .. tostring(nextPos.posX)
             )
         end
 
-        x = current.posX
-        y = current.posY
-        z = current.posZ
+        x = nextPos.posX
+        z = nextPos.posZ
 
         print("Avance correcto: X=" .. tostring(x))
     end
@@ -130,7 +131,7 @@ local ok, err = pcall(main)
 
 if not ok then
     pcall(function()
-        android.cancelTask()
+        a.cancelTask()
     end)
 
     print("MINADO DETENIDO: " .. tostring(err))
