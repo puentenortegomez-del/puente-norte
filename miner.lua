@@ -1,30 +1,58 @@
 
 -- CC:Androids 1.3.0 - Tunel continuo
+-- Minecraft Forge 1.20.1
 -- Direccion: X NEGATIVO
 -- Tunel: 3 bloques de ancho x 2 de alto
--- Detener: cancelar la tarea desde el control del androide
+-- Suelo conservado: Y=33
+-- Espacio excavado: Y=34 y Y=35
+-- Sin limite de longitud
 
 local a = _G.android
 
-local WIDTH = 3
-local HEIGHT = 2
-local STEP_DELAY = 0.25
+local CFG = {
+    floorY = 33,
+    centerZ = -801,
+    width = 3,
+    height = 2,
+    waitDelay = 0.25,
+    maxWait = 120
+}
+
+local running = true
+
+local function getPosition()
+    local p = a.getSelf()
+
+    if type(p) ~= "table"
+        or p.posX == nil
+        or p.posY == nil
+        or p.posZ == nil then
+        error("No se pudo leer la posicion del androide.")
+    end
+
+    return p
+end
 
 local function waitIdle()
-    while true do
+    local count = 0
+
+    while count < CFG.maxWait do
         local ok, task = pcall(function()
             return a.currentTask()
         end)
 
         if ok and task == "idle" then
-            return
+            return true
         end
 
-        sleep(STEP_DELAY)
+        sleep(CFG.waitDelay)
+        count = count + 1
     end
+
+    error("La tarea no termina. Se cancela el minado.")
 end
 
-local function call(method, x, y, z)
+local function runTask(method, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
@@ -32,61 +60,87 @@ local function call(method, x, y, z)
     end)
 
     if not ok then
-        error(method .. ": " .. tostring(result))
+        error(method .. " fallo: " .. tostring(result))
     end
 
     if type(result) == "table" and result[1] == true then
-        error(tostring(result[2]))
+        error(method .. " fallo: " .. tostring(result[2]))
     end
 
     waitIdle()
 end
 
-local function mineFace(x, y, z)
-    local half = math.floor(WIDTH / 2)
+local function mineFace(x)
+    local half = math.floor(CFG.width / 2)
 
-    -- Primero el centro y luego los laterales.
-    local offsets = {0, -1, 1}
-
-    for h = 0, HEIGHT - 1 do
-        for i = 1, #offsets do
-            local targetZ = z + offsets[i]
-            call("breakBlock", x, y + h, targetZ)
+    -- Romper solo la cara inmediata.
+    -- Nunca se excava el suelo Y=33.
+    for y = CFG.floorY + 1,
+            CFG.floorY + CFG.height do
+        for _, dz in ipairs({0, -1, 1}) do
+            runTask(
+                "breakBlock",
+                x,
+                y,
+                CFG.centerZ + dz
+            )
         end
     end
 end
 
 local function main()
-    local self = a.getSelf()
-    local y = self.posY
-    local z = self.posZ
-    local x = self.posX
+    local initial = getPosition()
 
-    print("Mineria continua hacia X negativo")
-    print("Inicio: X=" .. x .. " Y=" .. y .. " Z=" .. z)
+    if initial.posY ~= CFG.floorY + 1 then
+        error(
+            "Coloca el androide dentro del tunel a Y=34. " ..
+            "Posicion actual Y=" .. tostring(initial.posY)
+        )
+    end
 
-    while true do
-        local nextX = x - 1
+    if initial.posZ ~= CFG.centerZ then
+        error(
+            "Coloca el androide en Z=" ..
+            tostring(CFG.centerZ) ..
+            ". Posicion actual Z=" .. tostring(initial.posZ)
+        )
+    end
 
-        -- Despejar la siguiente seccion.
-        mineFace(nextX, y, z)
+    local x = initial.posX
 
-        -- Avanzar un bloque hacia X negativo.
-        call("moveTo", nextX, y, z)
+    print("Tunel infinito iniciado")
+    print("Direccion: X negativo")
+    print("Suelo: Y=33; altura libre: Y=34-35")
 
-        -- No usar una coordenada supuesta para el siguiente tramo.
-        local current = a.getSelf()
+    while running do
+        local previousX = x
+        local nextX = previousX - 1
 
-        if current.posX >= x then
+        -- Primero despejar la siguiente seccion.
+        mineFace(nextX)
+
+        -- Entrar en la seccion despejada.
+        runTask(
+            "moveTo",
+            nextX,
+            CFG.floorY + 1,
+            CFG.centerZ
+        )
+
+        local current = getPosition()
+
+        -- No permitir que el script continue si retrocede
+        -- o no consigue avanzar.
+        if current.posX >= previousX then
             error(
                 "El androide no avanzo hacia X negativo. " ..
-                "Posicion actual X=" .. current.posX
+                "X anterior=" .. tostring(previousX) ..
+                ", X actual=" .. tostring(current.posX)
             )
         end
 
         x = current.posX
-        y = current.posY
-        z = current.posZ
+        print("Avance correcto: X=" .. tostring(x))
     end
 end
 
@@ -96,5 +150,6 @@ if not ok then
     pcall(function()
         a.cancelTask()
     end)
-    print("MINADO INTERRUMPIDO: " .. tostring(err))
+
+    print("MINADO DETENIDO: " .. tostring(err))
 end
