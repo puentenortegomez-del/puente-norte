@@ -1,4 +1,4 @@
--- miner_seguro_redstone.lua
+-- miner_definitivo_limpio.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -29,7 +29,7 @@ local function apiCall(func, ...)
     return true, res1
 end
 
--- Autorecarga segura: busca únicamente redstone y evita tocar herramientas
+-- Autorecarga directa: busca redstone en los slots, la equipa y recarga sin enredos
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
@@ -39,39 +39,47 @@ local function comprobarYRecargar()
     print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
 
     local slotRedstone = nil
+    local slotPico = nil
 
-    -- Buscamos en los slots del 0 al 8 un ítem que sea redstone y NO un pico
+    -- 1. Identificar dónde está la redstone y dónde está el pico en los slots (0 al 8)
     for i = 0, 8 do
         local ok, info = apiCall(android.getSlotInfo, i)
         if ok and type(info) == "string" then
             local nombreItem = string.lower(info)
-            -- Verificamos que contenga "redstone" y que no sea una herramienta
-            if string.find(nombreItem, "redstone") and not string.find(nombreItem, "pickaxe") then
+            if string.find(nombreItem, "redstone") and not slotRedstone then
                 slotRedstone = i
-                print("Redstone encontrada en el slot " .. i .. " (" .. info .. ")")
-                break
+            elseif string.find(nombreItem, "pickaxe") and not slotPico then
+                slotPico = i
             end
         end
     end
 
     if not slotRedstone then
-        print("¡ADVERTENCIA! No se encontró redstone válida en los slots 0-8.")
+        print("¡ADVERTENCIA! No se encontró redstone en el inventario.")
         return false
     end
 
-    -- Equipamos el slot de redstone encontrado
+    print("Redstone encontrada en el slot " .. slotRedstone)
+
+    -- 2. Equipar la redstone en la mano principal
     local okEquip = apiCall(android.equipSlot, slotRedstone)
-    if okEquip then
-        apiCall(android.refuel)
-        local nuevoCombustible = android.fuelLevel()
-        if nuevoCombustible and nuevoCombustible > combustibleActual then
-            print("¡Recarga exitosa! Combustible actual: " .. tostring(nuevoCombustible))
-            return true
-        end
+    if not okEquip then
+        print("Error al equipar la redstone.")
+        return false
     end
 
-    print("¡ADVERTENCIA! No se pudo completar la recarga.")
-    return false
+    -- 3. Recargar combustible
+    apiCall(android.refuel)
+    local nuevoCombustible = android.fuelLevel()
+    print("¡Recarga exitosa! Combustible actual: " .. tostring(nuevoCombustible))
+
+    -- 4. Devolver el pico a la mano principal si lo encontramos
+    if slotPico then
+        apiCall(android.equipSlot, slotPico)
+        print("Pico devuelto a la mano principal.")
+    end
+
+    return true
 end
 
 -- Colocación inteligente de antorchas
@@ -88,7 +96,7 @@ local function colocarAntorcha(x, y, z)
     end
 end
 
--- Depositar en el cofre cercano sin importar la distancia (dentro del radio de detección)
+-- Depositar en el cofre cercano sin importar distancia (dentro del radio)
 local function depositarEnCofre()
     local cofres = android.getBlocksOfType("chest")
     if cofres and #cofres > 0 then
@@ -99,14 +107,13 @@ local function depositarEnCofre()
             local ok, info = apiCall(android.getSlotInfo, i)
             if ok and info and type(info) == "string" then
                 local itemLower = string.lower(info)
-                -- Depositamos todo el loot excepto el pico y la redstone
                 if not string.find(itemLower, "pickaxe") and not string.find(itemLower, "redstone") then
                     apiCall(android.equipSlot, i)
                     apiCall(android.storeHeldItemInContainer, cofre.x, cofre.y, cofre.z, 0)
                 end
             end
         end
-        print("Loot depositado en el cofre con éxito.")
+        print("Loot depositado en el cofre.")
     end
 end
 
