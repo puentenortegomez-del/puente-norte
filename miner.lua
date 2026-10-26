@@ -1,30 +1,30 @@
 
--- Tuneles y salas para CC:Androids
--- Direccion: X positivo
--- Requiere espacio y combustible suficiente.
+-- ==========================================
+-- TUNELES Y SALAS - CC:ANDROIDs
+-- Minecraft 1.20.1 / CC:Androids 1.3.0
+-- Direccion principal: X positivo
+-- ==========================================
 
-local android = _G.android
+local A = _G.android
 
-if type(android) ~= "table" then
-    print("ERROR: API android no disponible.")
+if type(A) ~= "table" then
+    print("ERROR: API android no disponible")
     return
 end
 
-local config = {
+local CFG = {
     tunnelLength = 40,
     tunnelWidth = 3,
     tunnelHeight = 3,
-
     roomWidth = 16,
     roomHeight = 16,
     roomDepth = 16,
-
     roomInterval = 16,
-    leftOffsetZ = -9,
-    rightOffsetZ = 9
+    leftOffsetZ = -10,
+    rightOffsetZ = 10
 }
 
-local oreTypes = {
+local ORES = {
     "minecraft:coal_ore",
     "minecraft:iron_ore",
     "minecraft:copper_ore",
@@ -48,79 +48,121 @@ local function report(message)
     print("[Tuneles] " .. tostring(message))
 end
 
--- Comprueba que existe una funcion de la API y la ejecuta.
--- La API puede devolver una tabla cuyo primer valor sea true
--- cuando se produce un error.
-local function callApi(name, ...)
-    local fn = android[name]
+-- Llamada segura a una funcion sin argumentos.
+local function call0(name)
+    local fn = A[name]
 
     if type(fn) ~= "function" then
-        return false, "Funcion no disponible: " .. name
+        return false, "Funcion inexistente: " .. name
     end
 
-    local ok, result = pcall(fn, ...)
+    local ok, result = pcall(fn)
 
     if not ok then
         return false, tostring(result)
     end
 
     if type(result) == "table" and result[1] == true then
-        return false, tostring(result[2] or "Error de la API")
+        return false, tostring(result[2] or "Error API")
+    end
+
+    return true, result
+end
+
+-- Llamada segura a una funcion con un argumento.
+local function call1(name, a)
+    local fn = A[name]
+
+    if type(fn) ~= "function" then
+        return false, "Funcion inexistente: " .. name
+    end
+
+    local ok, result = pcall(fn, a)
+
+    if not ok then
+        return false, tostring(result)
+    end
+
+    if type(result) == "table" and result[1] == true then
+        return false, tostring(result[2] or "Error API")
+    end
+
+    return true, result
+end
+
+-- Llamada segura a una funcion con tres coordenadas.
+local function call3(name, x, y, z)
+    local fn = A[name]
+
+    if type(fn) ~= "function" then
+        return false, "Funcion inexistente: " .. name
+    end
+
+    local ok, result = pcall(fn, x, y, z)
+
+    if not ok then
+        return false, tostring(result)
+    end
+
+    if type(result) == "table" and result[1] == true then
+        return false, tostring(result[2] or "Error API")
     end
 
     return true, result
 end
 
 local function getPosition()
-    local ok, selfInfo = callApi("getSelf")
+    local ok, info = call0("getSelf")
 
-    if not ok or type(selfInfo) ~= "table" then
-        report("No se pudo obtener la posicion del androide.")
+    if not ok or type(info) ~= "table" then
+        report("No se pudo obtener la posicion")
         return nil
     end
 
-    if type(selfInfo.posX) ~= "number"
-        or type(selfInfo.posY) ~= "number"
-        or type(selfInfo.posZ) ~= "number" then
-        report("La API devolvio coordenadas invalidas.")
+    if type(info.posX) ~= "number"
+        or type(info.posY) ~= "number"
+        or type(info.posZ) ~= "number" then
+        report("Coordenadas no validas")
         return nil
     end
 
     return {
-        x = math.floor(selfInfo.posX),
-        y = math.floor(selfInfo.posY),
-        z = math.floor(selfInfo.posZ)
+        x = math.floor(info.posX),
+        y = math.floor(info.posY),
+        z = math.floor(info.posZ)
     }
 end
 
-local function checkFuel()
-    local ok, fuel = callApi("fuelLevel")
+local function hasFuel()
+    local ok, fuel = call0("fuelLevel")
 
     if not ok or type(fuel) ~= "number" then
-        report("No se pudo comprobar el combustible.")
+        report("No se pudo consultar el combustible")
         return false
     end
 
     if fuel <= 0 then
-        report("Sin combustible. Recarga el androide.")
+        report("Sin combustible. Recarga el androide")
         return false
     end
 
     return true
 end
 
-local function breakAt(x, y, z)
-    if not checkFuel() then
+local function dig(x, y, z)
+    if not hasFuel() then
         return false
     end
 
-    local ok, err = callApi("breakBlock", x, y, z)
+    local ok, err = call3("breakBlock", x, y, z)
 
     if not ok then
         report(
-            "Error excavando "
-            .. x .. "," .. y .. "," .. z
-            .. ": " .. tostring(err)
+            "Fallo en "
+            .. tostring(x) .. ","
+            .. tostring(y) .. ","
+            .. tostring(z) .. ": "
+            .. tostring(err)
         )
         return false
     end
@@ -128,135 +170,136 @@ local function breakAt(x, y, z)
     return true
 end
 
--- Excava un tramo recto en X positivo.
-local function tunnelSegment(start, length)
-    report("Excavando tunel de " .. length .. " bloques.")
+-- Excava un tramo de tunel.
+local function digTunnel(start)
+    report("Comenzando tunel")
 
-    local halfWidth = math.floor(config.tunnelWidth / 2)
+    local half = math.floor(CFG.tunnelWidth / 2)
 
-    for dx = 0, length - 1 do
+    for dx = 0, CFG.tunnelLength - 1 do
         local x = start.x + dx
 
-        for dz = -halfWidth, halfWidth do
-            for dy = 0, config.tunnelHeight - 1 do
-                if not breakAt(
-                    x,
-                    start.y + dy,
-                    start.z + dz
-                ) then
+        for dz = -half, half do
+            for dy = 0, CFG.tunnelHeight - 1 do
+                local y = start.y + dy
+                local z = start.z + dz
+
+                if not dig(x, y, z) then
                     return false
                 end
             end
         end
 
         if dx % 5 == 0 then
-            report("Tunel: " .. dx .. "/" .. length)
+            report("Progreso del tunel: " .. tostring(dx))
         end
     end
 
+    report("Tunel terminado")
     return true
 end
 
--- Excava el volumen interior de una sala.
-local function createRoom(cx, baseY, cz)
-    local w = config.roomWidth
-    local h = config.roomHeight
-    local d = config.roomDepth
-
-    -- Las dimensiones son exactas: 16 x 16 x 16.
-    local x0 = cx - math.floor(w / 2)
-    local y0 = baseY
-    local z0 = cz - math.floor(d / 2)
+-- Excava una sala de dimensiones exactas.
+-- La altura inicial es la posicion Y del androide.
+local function digRoom(cx, baseY, cz)
+    local x0 = cx - math.floor(CFG.roomWidth / 2)
+    local z0 = cz - math.floor(CFG.roomDepth / 2)
 
     report(
-        "Creando sala en "
-        .. cx .. "," .. baseY .. "," .. cz
+        "Sala en X=" .. tostring(cx)
+        .. " Y=" .. tostring(baseY)
+        .. " Z=" .. tostring(cz)
     )
 
-    for dx = 0, w - 1 do
-        for dy = 0, h - 1 do
-            for dz = 0, d - 1 do
-                if not breakAt(
-                    x0 + dx,
-                    y0 + dy,
-                    z0 + dz
-                ) then
+    for dx = 0, CFG.roomWidth - 1 do
+        for dy = 0, CFG.roomHeight - 1 do
+            for dz = 0, CFG.roomDepth - 1 do
+                local x = x0 + dx
+                local y = baseY + dy
+                local z = z0 + dz
+
+                if not dig(x, y, z) then
                     return false
                 end
             end
         end
     end
 
+    report("Sala terminada")
     return true
 end
 
--- Busca minerales que el androide pueda ver.
-local function detectOres()
-    local found = {}
+-- Detecta minerales visibles para el androide.
+local function findOres()
+    local total = 0
 
-    for _, ore in ipairs(oreTypes) do
-        local ok, blocks = callApi("getBlocksOfType", ore)
+    for i = 1, #ORES do
+        local ok, blocks = call1("getBlocksOfType", ORES[i])
 
-        if ok and type(blocks) == "table"
-            and #blocks > 0 then
-            found[#found + 1] =
-                ore .. " (" .. #blocks .. ")"
+        if ok and type(blocks) == "table" then
+            local count = #blocks
+
+            if count > 0 then
+                report(ORES[i] .. ": " .. tostring(count))
+                total = total + count
+            end
         end
     end
 
-    if #found > 0 then
-        report("Minerales visibles: " .. table.concat(found, ", "))
+    if total == 0 then
+        report("No se encontraron minerales visibles")
     else
-        report("No se han detectado minerales visibles.")
+        report("Bloques minerales detectados: " .. tostring(total))
     end
 end
 
 local function main()
     local start = getPosition()
 
-    if not start then
+    if start == nil then
         return
     end
 
     report(
-        "Inicio: "
-        .. start.x .. "," .. start.y .. "," .. start.z
+        "Inicio X=" .. tostring(start.x)
+        .. " Y=" .. tostring(start.y)
+        .. " Z=" .. tostring(start.z)
     )
 
-    if not checkFuel() then
+    if not hasFuel() then
         return
     end
 
-    if not tunnelSegment(start, config.tunnelLength) then
-        report("Excavacion del tunel interrumpida.")
+    -- Primero excava el tunel principal.
+    if not digTunnel(start) then
+        report("Tunel interrumpido")
         return
     end
 
-    -- Crea dos salas por cada intervalo completo.
-    local distance = config.roomInterval
+    -- Despues crea las salas a intervalos regulares.
+    local distance = CFG.roomInterval
 
-    while distance < config.tunnelLength do
+    while distance < CFG.tunnelLength do
         local roomX = start.x + distance
+        local leftZ = start.z + CFG.leftOffsetZ
+        local rightZ = start.z + CFG.rightOffsetZ
 
-        local leftZ = start.z + config.leftOffsetZ
-        local rightZ = start.z + config.rightOffsetZ
-
-        if not createRoom(roomX, start.y, leftZ) then
-            report("No se pudo completar la sala izquierda.")
+        if not digRoom(roomX, start.y, leftZ) then
+            report("Error al excavar la sala izquierda")
             return
         end
 
-        if not createRoom(roomX, start.y, rightZ) then
-            report("No se pudo completar la sala derecha.")
+        if not digRoom(roomX, start.y, rightZ) then
+            report("Error al excavar la sala derecha")
             return
         end
 
-        detectOres()
+        findOres()
 
-        distance = distance + config.roomInterval
+        distance = distance + CFG.roomInterval
     end
 
-    report("Trabajo terminado.")
+    report("Todas las operaciones han terminado")
 end
 
 main()
