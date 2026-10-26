@@ -1,4 +1,4 @@
--- miner_funcional_definitivo.lua
+-- miner_perfecto.lua
 -- CC:Androids 1.3.0 | Minecraft 1.20.1
 
 local android = _G.android
@@ -19,44 +19,59 @@ local function esperarTarea()
     end
 end
 
--- Función de recarga directa y robusta basada puramente en los slots (0 al 8)
+-- Sistema de recarga automática infalible (libera la mano, recarga y devuelve el pico)
 local function comprobarYRecargar()
     local combustibleActual = android.fuelLevel()
     if combustibleActual and combustibleActual >= COMBUSTIBLE_MINIMO then
         return true
     end
 
-    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Buscando redstone...")
+    print("Combustible bajo (" .. tostring(combustibleActual) .. "). Recargando...")
 
-    -- Recorremos cada slot del inventario superior (0 al 8)
+    -- 1. Buscar un slot vacío para apartar temporalmente lo que esté en la mano principal
+    local slotVacio = nil
     for i = 0, 8 do
-        -- Intentamos equipar el slot directamente
+        local ok, info = pcall(android.getSlotInfo, i)
+        if not ok or info == false or info == nil or info == "" then
+            slotVacio = i
+            break
+        end
+    end
+
+    if slotVacio then
+        pcall(android.storeItem, slotVacio)
+    end
+
+    -- 2. Barrer los slots del 0 al 8 para encontrar redstone y recargar
+    local recargaExitosa = false
+    for i = 0, 8 do
         local okEquip = pcall(android.equipSlot, i)
         if okEquip then
-            -- Intentamos recargar con el ítem equipado
             pcall(android.refuel)
             local nuevoCombustible = android.fuelLevel()
-            
-            -- Si el nivel de combustible subió, la recarga fue exitosa
             if nuevoCombustible and nuevoCombustible > combustibleActual then
-                print("¡Recarga exitosa desde el slot " .. i .. "! Combustible actual: " .. tostring(nuevoCombustible))
-                
-                -- Buscamos el pico en el inventario para devolverlo a la mano si está disponible
-                for j = 0, 8 do
-                    local okInfo, info = pcall(android.getSlotInfo, j)
-                    if okInfo and type(info) == "string" and string.find(string.lower(info), "pickaxe") then
-                        pcall(android.equipSlot, j)
-                        break
-                    end
-                end
-                
-                return true
+                print("¡Recarga exitosa! Combustible actual: " .. tostring(nuevoCombustible))
+                recargaExitosa = true
+                break
             end
         end
     end
 
-    print("¡ADVERTENCIA! No se pudo recargar desde ningún slot.")
-    return false
+    -- 3. Buscar el pico en el inventario y volver a equiparlo en la mano principal
+    for i = 0, 8 do
+        local ok, info = pcall(android.getSlotInfo, i)
+        if ok and type(info) == "string" and string.find(string.lower(info), "pickaxe") then
+            pcall(android.equipSlot, i)
+            break
+        end
+    end
+
+    if not recargaExitosa then
+        print("¡ADVERTENCIA! No se pudo recargar el combustible.")
+        return false
+    end
+
+    return true
 end
 
 -- Colocación inteligente de antorchas
@@ -73,7 +88,7 @@ local function colocarAntorcha(x, y, z)
     end
 end
 
--- Depositar en el cofre cercano sin importar la distancia
+-- Depositar loot en el cofre más cercano detectado
 local function depositarEnCofre()
     local cofres = android.getBlocksOfType("chest")
     if cofres and #cofres > 0 then
@@ -90,7 +105,7 @@ local function depositarEnCofre()
                 end
             end
         end
-        print("Loot depositado en el cofre.")
+        print("Loot depositado en el cofre con éxito.")
     end
 end
 
