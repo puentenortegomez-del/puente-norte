@@ -1,36 +1,47 @@
 
--- CC:Androids 1.3.0
--- Tunel recto hacia X negativo
--- Ancho: 3 bloques (Z - 1, Z, Z + 1)
--- Altura: Y=34 y Y=35
--- Suelo Y=33 protegido
+-- miner.lua
+-- CC:Androids 1.3.0 / Minecraft Forge 1.20.1
+-- Tunel hacia X negativo
+-- Seccion: 3 de ancho (eje Z) x 2 de alto
+-- Suelo protegido: Y=33
+-- Excavacion: Y=34 y Y=35
 
 local a = _G.android
 
 local FLOOR_Y = 33
-local CENTER_Z = -801
-local START_X = 2212
-local WORK_Y = 32
-local WAIT_TIME = 0.2
-local MAX_WAIT = 600
+local HEIGHT_TOP = 35
+local WAIT_STEP = 0.2
+local MAX_WAIT = 300
 
-local function position()
+-- Comprueba si la API esta disponible
+if not a or not a.getSelf or not a.breakBlock
+    or not a.moveTo or not a.currentTask then
+    error("API de CC:Androids no disponible")
+end
+
+local function getPos()
     local p = a.getSelf()
-    return p.posX, p.posY, p.posZ
+    if type(p) ~= "table"
+        or type(p.posX) ~= "number"
+        or type(p.posY) ~= "number"
+        or type(p.posZ) ~= "number" then
+        error("No se pudo leer la posicion real del androide")
+    end
+    return p
 end
 
 local function waitIdle()
-    local elapsed = 0
+    local waited = 0
     while a.currentTask() ~= "idle" do
-        sleep(WAIT_TIME)
-        elapsed = elapsed + WAIT_TIME
-        if elapsed >= MAX_WAIT then
-            error("Tiempo agotado esperando al androide")
+        sleep(WAIT_STEP)
+        waited = waited + WAIT_STEP
+        if waited >= MAX_WAIT then
+            error("Tiempo agotado esperando a que termine la tarea")
         end
     end
 end
 
-local function run(method, x, y, z)
+local function execute(method, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
@@ -38,70 +49,85 @@ local function run(method, x, y, z)
     end)
 
     if not ok then
-        error(method .. ": " .. tostring(result))
+        error(method .. " fallo: " .. tostring(result))
     end
 
     if type(result) == "table" and result[1] == true then
-        error(method .. ": " .. tostring(result[2]))
+        error(method .. " fallo: " .. tostring(result[2]))
     end
 
     waitIdle()
 end
 
-local function mineBlock(x, y, z)
-    -- Protección absoluta del suelo
+local function breakSafe(x, y, z)
+    -- Nunca ordenar romper el suelo ni bloques inferiores
     if y <= FLOOR_Y then
         return
     end
 
-    run("breakBlock", x, y, z)
+    execute("breakBlock", x, y, z)
 end
 
 local function main()
-    local x = START_X
+    local p = getPos()
 
-    print("MINERO: avance hacia X negativo")
-    print("Inicio: X=2212 Y=32 Z=-801")
+    -- Coordenadas iniciales reales, incluidos los decimales
+    local centerZ = math.floor(p.posZ + 0.5)
+    local workY = p.posY
+    local currentX = p.posX
+
+    print("Tunel recto iniciado")
+    print("Inicio X=" .. currentX ..
+        " Y=" .. p.posY .. " Z=" .. p.posZ)
+    print("Direccion: X negativo")
+    print("Centro Z=" .. centerZ)
     print("Suelo Y=33 protegido")
     print("Excavacion: Y=34 y Y=35")
 
     while true do
-        local targetX = x - 1
+        -- Cada seccion corresponde al siguiente bloque en X negativo.
+        -- Se usa la posicion REAL actual, no una coordenada inicial fija.
+        local targetX = math.floor(currentX) - 1
 
         print("Excavando seccion X=" .. targetX)
 
-        -- Primero despejar la parte central y superior.
-        mineBlock(targetX, 34, CENTER_Z)
-        mineBlock(targetX, 35, CENTER_Z)
+        -- Excavar primero el centro y luego los laterales.
+        breakSafe(targetX, 34, centerZ)
+        breakSafe(targetX, 35, centerZ)
 
-        -- Después los laterales, sin tocar el suelo.
-        mineBlock(targetX, 34, CENTER_Z - 1)
-        mineBlock(targetX, 35, CENTER_Z - 1)
-        mineBlock(targetX, 34, CENTER_Z + 1)
-        mineBlock(targetX, 35, CENTER_Z + 1)
+        breakSafe(targetX, 34, centerZ - 1)
+        breakSafe(targetX, 35, centerZ - 1)
 
-        -- Volver al eje central antes de continuar.
-        run("moveTo", targetX, WORK_Y, CENTER_Z)
+        breakSafe(targetX, 34, centerZ + 1)
+        breakSafe(targetX, 35, centerZ + 1)
 
-        local px, py, pz = position()
-        print("Posicion actual: X=" .. px ..
-              " Y=" .. py .. " Z=" .. pz)
+        -- Volver al eje central a la altura de trabajo original.
+        execute("moveTo", targetX, workY, centerZ)
 
-        -- No continuar si no ha alcanzado la siguiente sección.
-        if px > targetX + 0.8 or px < targetX - 1.8 then
-            error("Posicion inesperada en X: " .. px)
+        local after = getPos()
+
+        -- Tolerancia para coordenadas decimales del movimiento.
+        if after.posX >= currentX - 0.05 then
+            error("No avanzo hacia X negativo. X anterior=" ..
+                currentX .. " X actual=" .. after.posX)
         end
 
-        if math.abs(pz - CENTER_Z) > 0.8 then
-            error("Se ha desviado del eje Z: " .. pz)
+        if math.abs(after.posZ - centerZ) > 1.0 then
+            error("Desvio lateral detectado. Z actual=" ..
+                after.posZ .. " Z objetivo=" .. centerZ)
         end
 
-        x = targetX
+        currentX = after.posX
+        print("Avance correcto: X=" .. currentX ..
+            " Z=" .. after.posZ)
     end
 end
 
 local ok, err = pcall(main)
+
 if not ok then
-    pcall(function() a.cancelTask() end)
+    pcall(function()
+        a.cancelTask()
+    end)
     print("MINADO DETENIDO: " .. tostring(err))
 end
