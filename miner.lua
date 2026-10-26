@@ -1,49 +1,36 @@
 
 -- CC:Androids 1.3.0
 -- Tunel recto hacia X negativo
--- Seccion: 3 bloques de ancho x 2 de alto
--- Suelo Y=33 protegido: nunca se rompe
--- Excavacion: Y=34 y Y=35
--- Longitud ilimitada
+-- Ancho: 3 bloques (Z - 1, Z, Z + 1)
+-- Altura: Y=34 y Y=35
+-- Suelo Y=33 protegido
 
 local a = _G.android
 
 local FLOOR_Y = 33
-local HEIGHT = 2
-local WIDTH = 3
-local WAIT_DELAY = 0.25
-local MAX_WAIT = 120
+local CENTER_Z = -801
+local START_X = 2212
+local WORK_Y = 32
+local WAIT_TIME = 0.2
+local MAX_WAIT = 600
 
-local function getPos()
+local function position()
     local p = a.getSelf()
-
-    if type(p) ~= "table"
-        or p.posX == nil
-        or p.posY == nil
-        or p.posZ == nil then
-        error("No se pudo obtener la posicion del androide")
-    end
-
-    return p
+    return p.posX, p.posY, p.posZ
 end
 
 local function waitIdle()
-    for i = 1, MAX_WAIT do
-        local ok, task = pcall(function()
-            return a.currentTask()
-        end)
-
-        if ok and task == "idle" then
-            return
+    local elapsed = 0
+    while a.currentTask() ~= "idle" do
+        sleep(WAIT_TIME)
+        elapsed = elapsed + WAIT_TIME
+        if elapsed >= MAX_WAIT then
+            error("Tiempo agotado esperando al androide")
         end
-
-        sleep(WAIT_DELAY)
     end
-
-    error("La tarea anterior no ha terminado")
 end
 
-local function runTask(method, x, y, z)
+local function run(method, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
@@ -61,80 +48,60 @@ local function runTask(method, x, y, z)
     waitIdle()
 end
 
-local function mineFace(x, centerZ)
-    -- Centro primero y luego los laterales.
-    -- Nunca se rompe Y=33.
-    local offsets = {0, -1, 1}
-
-    for y = FLOOR_Y + 1, FLOOR_Y + HEIGHT do
-        for i = 1, #offsets do
-            runTask(
-                "breakBlock",
-                x,
-                y,
-                centerZ + offsets[i]
-            )
-        end
+local function mineBlock(x, y, z)
+    -- Protección absoluta del suelo
+    if y <= FLOOR_Y then
+        return
     end
+
+    run("breakBlock", x, y, z)
 end
 
 local function main()
-    local p = getPos()
+    local x = START_X
 
-    -- Mantener la altura y el eje Z iniciales.
-    local x = math.floor(p.posX)
-    local workY = p.posY
-    local centerZ = math.floor(p.posZ)
-
-    print("Tunel recto iniciado")
-    print("Posicion inicial X=" .. tostring(p.posX)
-        .. " Y=" .. tostring(p.posY)
-        .. " Z=" .. tostring(p.posZ))
-    print("Direccion: X negativo")
+    print("MINERO: avance hacia X negativo")
+    print("Inicio: X=2212 Y=32 Z=-801")
     print("Suelo Y=33 protegido")
+    print("Excavacion: Y=34 y Y=35")
 
     while true do
-        local nextX = x - 1
+        local targetX = x - 1
 
-        print("Excavando seccion X=" .. tostring(nextX))
+        print("Excavando seccion X=" .. targetX)
 
-        -- Excavar la cara siguiente.
-        mineFace(nextX, centerZ)
+        -- Primero despejar la parte central y superior.
+        mineBlock(targetX, 34, CENTER_Z)
+        mineBlock(targetX, 35, CENTER_Z)
 
-        -- Regresar al eje central y avanzar.
-        -- No se cambia la altura de trabajo.
-        runTask(
-            "moveTo",
-            nextX,
-            workY,
-            centerZ
-        )
+        -- Después los laterales, sin tocar el suelo.
+        mineBlock(targetX, 34, CENTER_Z - 1)
+        mineBlock(targetX, 35, CENTER_Z - 1)
+        mineBlock(targetX, 34, CENTER_Z + 1)
+        mineBlock(targetX, 35, CENTER_Z + 1)
 
-        local current = getPos()
-        local currentBlockX = math.floor(current.posX)
+        -- Volver al eje central antes de continuar.
+        run("moveTo", targetX, WORK_Y, CENTER_Z)
 
-        if currentBlockX >= x then
-            error(
-                "No avanzo hacia X negativo. X="
-                .. tostring(current.posX)
-                .. " Z=" .. tostring(current.posZ)
-            )
+        local px, py, pz = position()
+        print("Posicion actual: X=" .. px ..
+              " Y=" .. py .. " Z=" .. pz)
+
+        -- No continuar si no ha alcanzado la siguiente sección.
+        if px > targetX + 0.8 or px < targetX - 1.8 then
+            error("Posicion inesperada en X: " .. px)
         end
 
-        -- Usar el bloque real alcanzado, no una suposicion.
-        x = currentBlockX
-        workY = current.posY
+        if math.abs(pz - CENTER_Z) > 0.8 then
+            error("Se ha desviado del eje Z: " .. pz)
+        end
 
-        print("Avance correcto: X=" .. tostring(x))
+        x = targetX
     end
 end
 
 local ok, err = pcall(main)
-
 if not ok then
-    pcall(function()
-        a.cancelTask()
-    end)
-
+    pcall(function() a.cancelTask() end)
     print("MINADO DETENIDO: " .. tostring(err))
 end
