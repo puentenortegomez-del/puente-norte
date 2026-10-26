@@ -1,91 +1,101 @@
-
 -- miner.lua
--- CC:Androids 1.3.0
--- Tunel hacia X negativo
--- Carriles Z=-801 y Z=-802
--- Alturas Y=33 y Y=34
+-- CC:Androids 1.3.0 | Minecraft 1.20.1
+-- Tunel 2x2 hacia X negativo
 
-local a = _G.android
+local android = _G.android
 
-local ZS = {-801, -802}
-local YS = {33, 34}
-local WAIT = 0.2
-local TIMEOUT = 300
+local Z1 = -801
+local Z2 = -802
+local Y1 = 33
+local Y2 = 34
 
-local function position()
-    local p = a.getSelf()
-    assert(type(p) == "table" and type(p.posX) == "number",
-        "No se puede leer la posicion")
-    return p
-end
+local LONGITUD = 100
+local PAUSA = 0.2
 
-local function waitIdle()
-    local t = 0
-    while a.currentTask() ~= "idle" do
-        sleep(WAIT)
-        t = t + WAIT
-        if t >= TIMEOUT then
-            error("Tiempo agotado esperando al androide")
+local function esperarTarea()
+    local inicio = os.clock()
+    local vioTarea = false
+
+    while os.clock() - inicio < 30 do
+        sleep(PAUSA)
+
+        local tarea = android.currentTask()
+
+        if tarea ~= "idle" then
+            vioTarea = true
+        elseif vioTarea then
+            return true
         end
     end
+
+    return false
 end
 
-local function task(method, x, y, z)
-    waitIdle()
-    local ok, result = pcall(function()
-        return a[method](x, y, z)
-    end)
+local function ejecutar(nombre, funcion, ...)
+    local ok, resultado = pcall(funcion, ...)
+
     if not ok then
-        error(method .. ": " .. tostring(result))
+        print("Error en " .. nombre .. ": " .. tostring(resultado))
+        return false
     end
-    if type(result) == "table" and result[1] == true then
-        error(method .. ": " .. tostring(result[2]))
+
+    if type(resultado) == "table" and resultado[1] == true then
+        print("Error en " .. nombre .. ": " .. tostring(resultado[2]))
+        return false
     end
-    waitIdle()
+
+    esperarTarea()
+    return true
 end
 
-local function mineSection(x)
-    for _, z in ipairs(ZS) do
-        for _, y in ipairs(YS) do
-            task("breakBlock", x, y, z)
-        end
-    end
+local function minarBloque(x, y, z)
+    return ejecutar(
+        "minado " .. x .. "," .. y .. "," .. z,
+        android.breakBlock,
+        x, y, z
+    )
+end
+
+local function minarSeccion(x)
+    -- Primera columna
+    if not minarBloque(x, Y1, Z1) then return false end
+    if not minarBloque(x, Y2, Z1) then return false end
+
+    -- Segunda columna
+    if not minarBloque(x, Y1, Z2) then return false end
+    if not minarBloque(x, Y2, Z2) then return false end
+
+    return true
 end
 
 local function main()
-    local p = position()
-    local nextX = math.floor(p.posX) - 1
+    local posicion = android.getSelf()
+    local xInicial = math.floor(posicion.posX)
+    local xFinal = xInicial - LONGITUD
 
-    print("MINER V2 iniciado")
+    print("=== MINER INICIADO ===")
     print("Direccion: X negativo")
-    print("Z=-801 y Z=-802; Y=33 y Y=34")
-    print("Posicion inicial: X=" .. p.posX ..
-        " Y=" .. p.posY .. " Z=" .. p.posZ)
+    print("Carriles Z: " .. Z1 .. " y " .. Z2)
+    print("Alturas Y: " .. Y1 .. " y " .. Y2)
+    print("Desde X=" .. xInicial .. " hasta X=" .. xFinal)
 
-    while true do
-        print("Picando seccion X=" .. nextX)
-        mineSection(nextX)
+    for x = xInicial - 1, xFinal, -1 do
+        print("Excavando X=" .. x)
 
-        -- Actualizar el objetivo desde la posicion real.
-        p = position()
-        local reachedX = math.floor(p.posX)
-
-        -- Si el androide no avanzo, intentar acercarlo al eje.
-        if reachedX > nextX then
-            task("moveTo", nextX, 33, -801)
-            p = position()
-            reachedX = math.floor(p.posX)
+        if not minarSeccion(x) then
+            print("Miner detenido por un error.")
+            return
         end
 
-        print("Posicion actual: X=" .. p.posX ..
-            " Y=" .. p.posY .. " Z=" .. p.posZ)
-
-        nextX = math.min(nextX - 1, reachedX - 1)
+        -- Avanza al siguiente tramo por el mismo túnel.
+        ejecutar("movimiento", android.moveTo, x, Y1, Z1)
     end
+
+    print("=== TUNEL TERMINADO ===")
 end
 
 local ok, err = pcall(main)
+
 if not ok then
-    pcall(function() a.cancelTask() end)
-    print("MINADO DETENIDO: " .. tostring(err))
+    print("ERROR FATAL: " .. tostring(err))
 end
