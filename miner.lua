@@ -1,7 +1,7 @@
 
 -- miner.lua
 -- CC:Androids 1.3.0
--- Tunel recto hacia X negativo
+-- Tunel hacia X negativo
 -- Ancho: Z=-801 y Z=-802
 -- Alto: Y=33 y Y=34
 
@@ -29,7 +29,7 @@ local function waitIdle()
         sleep(WAIT)
         elapsed = elapsed + WAIT
         if elapsed >= TIMEOUT then
-            error("Tiempo agotado esperando la tarea anterior")
+            error("Tiempo agotado esperando la tarea")
         end
     end
 end
@@ -53,7 +53,7 @@ local function run(method, x, y, z)
 end
 
 local function mineSection(x)
-    -- Se excavan las dos alturas en ambos carriles.
+    -- Romper solo las cuatro posiciones del tunel.
     run("breakBlock", x, Y1, Z1)
     run("breakBlock", x, Y2, Z1)
     run("breakBlock", x, Y1, Z2)
@@ -62,46 +62,38 @@ end
 
 local function main()
     local p = getPos()
-
-    -- Se toma la posicion actual, no una posicion inicial inventada.
     local currentX = math.floor(p.posX)
-    local centerZ = Z1
 
-    print("Tunel iniciado hacia X negativo")
-    print("Posicion inicial X=" .. p.posX ..
+    print("Tunel hacia X negativo")
+    print("Inicio X=" .. p.posX ..
         " Y=" .. p.posY .. " Z=" .. p.posZ)
-    print("Carriles: Z=-801 y Z=-802")
+    print("Ancho: Z=-801 y Z=-802")
     print("Altura: Y=33 y Y=34")
 
     while true do
         local targetX = currentX - 1
-        print("Excavando seccion X=" .. targetX)
+        print("Excavando X=" .. targetX)
 
         mineSection(targetX)
 
-        -- Tras excavar, intenta avanzar hacia el siguiente tramo.
-        run("moveTo", targetX, Y1, centerZ)
+        -- Actualizar siempre la posicion real despues de excavar.
+        p = getPos()
+        currentX = math.floor(p.posX)
 
-        local after = getPos()
-        print("Posicion tras movimiento X=" .. after.posX ..
-            " Y=" .. after.posY .. " Z=" .. after.posZ)
+        -- Continuar desde la siguiente seccion en X negativo.
+        targetX = currentX - 1
+        run("moveTo", targetX, Y1, Z1)
 
-        -- Solo detecta si no hubo movimiento hacia X negativo.
-        -- No exige llegar a una coordenada entera exacta.
-        if after.posX >= p.posX - 0.1 then
-            error("El androide no se ha desplazado hacia X negativo. Comprueba obstáculos y combustible.")
-        end
+        p = getPos()
+        currentX = math.floor(p.posX)
 
-        p = after
-        currentX = math.floor(after.posX)
+        print("Posicion actual X=" .. p.posX ..
+            " Y=" .. p.posY .. " Z=" .. p.posZ)
     end
 end
 
 local ok, err = pcall(main)
-
 if not ok then
-    pcall(function()
-        a.cancelTask()
-    end)
+    pcall(function() a.cancelTask() end)
     print("MINADO DETENIDO: " .. tostring(err))
 end
