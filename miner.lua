@@ -1,56 +1,45 @@
 
 -- CC:Androids 1.3.0 - Tunel continuo
--- Direccion: X negativo
--- Posicion de trabajo: Y=33
--- Suelo Y=33: NO ROMPER
--- Excavacion: Y=34 y Y=35
+-- Direccion X negativa
 -- Ancho: 3 bloques
--- Longitud: infinita
+-- Alto: 2 bloques
+-- No romper Y=33
+-- Longitud ilimitada
 
-local android = _G.android
+local a = _G.android
 
 local FLOOR_Y = 33
-local WORK_Y = 33
-local CENTER_Z = -801
+local TUNNEL_HEIGHT = 2
 local WIDTH = 3
-local HEIGHT = 2
 local WAIT_DELAY = 0.25
 local MAX_WAIT = 120
 
-local function getPosition()
-    local p = android.getSelf()
-
-    if type(p) ~= "table"
-        or p.posX == nil
-        or p.posY == nil
-        or p.posZ == nil then
-        error("No se pudo leer la posicion del androide")
+local function getPos()
+    local p = a.getSelf()
+    if not p or p.posX == nil or p.posY == nil or p.posZ == nil then
+        error("No se pudo obtener la posicion")
     end
-
     return p
 end
 
 local function waitIdle()
     for i = 1, MAX_WAIT do
         local ok, task = pcall(function()
-            return android.currentTask()
+            return a.currentTask()
         end)
-
         if ok and task == "idle" then
             return
         end
-
         sleep(WAIT_DELAY)
     end
-
-    error("La tarea anterior no ha terminado")
+    error("Tiempo agotado esperando la tarea")
 end
 
 local function runTask(method, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
-        return android[method](x, y, z)
+        return a[method](x, y, z)
     end)
 
     if not ok then
@@ -64,49 +53,71 @@ local function runTask(method, x, y, z)
     waitIdle()
 end
 
-local function mineFace(x, z)
-    -- Romper solo los bloques por encima del suelo.
-    -- Nunca se llama a breakBlock para Y=33.
-    for y = FLOOR_Y + 1, FLOOR_Y + HEIGHT do
+local function mineFace(blockX, centerZ)
+    -- Solo se excavan Y=34 e Y=35.
+    -- Y=33 nunca se pasa a breakBlock().
+    for y = FLOOR_Y + 1, FLOOR_Y + TUNNEL_HEIGHT do
         for dz = -1, 1 do
-            runTask("breakBlock", x, y, z + dz)
+            runTask(
+                "breakBlock",
+                blockX,
+                y,
+                centerZ + dz
+            )
         end
     end
 end
 
 local function main()
-    local p = getPosition()
-    local x = p.posX
-    local z = p.posZ
+    local p = getPos()
 
-    print("Tunel continuo iniciado")
-    print("Direccion: X negativo")
-    print("Posicion de trabajo: Y=33")
+    -- Separar las coordenadas enteras de los bloques
+    -- de la posicion fisica, que puede tener decimales.
+    local blockX = math.floor(p.posX)
+    local centerZ = math.floor(p.posZ)
+
+    print("Minero iniciado")
+    print("Posicion inicial X=" .. tostring(p.posX)
+        .. " Y=" .. tostring(p.posY)
+        .. " Z=" .. tostring(p.posZ))
+    print("Siguiente bloque X=" .. tostring(blockX - 1))
     print("Suelo Y=33 protegido")
-    print("Excavacion: Y=34 y Y=35")
 
     while true do
-        local nextX = x - 1
+        local nextX = blockX - 1
 
-        -- Excavar la siguiente seccion.
-        mineFace(nextX, z)
+        print("Excavando columna X=" .. tostring(nextX))
 
-        -- Mantener Y=33 al avanzar.
-        runTask("moveTo", nextX, WORK_Y, z)
+        -- Limpiar la siguiente seccion.
+        mineFace(nextX, centerZ)
 
-        local current = getPosition()
+        -- No usar la posicion decimal para calcular
+        -- el siguiente bloque.
+        runTask(
+            "moveTo",
+            nextX,
+            p.posY,
+            centerZ
+        )
 
-        if current.posX >= x then
+        local current = getPos()
+
+        -- Comprobar el avance por bloque, no por decimales.
+        local currentBlockX = math.floor(current.posX)
+
+        if currentBlockX >= blockX then
             error(
-                "No avanzo hacia X negativo. X actual="
-                .. tostring(current.posX)
+                "No entro en el siguiente bloque. "
+                .. "Objetivo X=" .. tostring(nextX)
+                .. ", posicion X=" .. tostring(current.posX)
             )
         end
 
-        x = current.posX
-        z = current.posZ
+        blockX = nextX
+        p = current
 
-        print("Avance correcto: X=" .. tostring(x))
+        print("Bloque alcanzado. Siguiente X="
+            .. tostring(blockX - 1))
     end
 end
 
@@ -114,8 +125,7 @@ local ok, err = pcall(main)
 
 if not ok then
     pcall(function()
-        android.cancelTask()
+        a.cancelTask()
     end)
-
     print("MINADO DETENIDO: " .. tostring(err))
 end
