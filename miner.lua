@@ -1,135 +1,100 @@
 
--- CC:Androids 1.3.0 - Minero
+-- CC:Androids 1.3.0 - Tunel continuo
 -- Direccion: X NEGATIVO
--- Tunel: 3 ancho x 2 alto
--- Salas: 16 x 16 x 16, cada 16 bloques de avance
+-- Tunel: 3 bloques de ancho x 2 de alto
+-- Detener: cancelar la tarea desde el control del androide
 
-local android = _G.android
+local a = _G.android
 
-local CFG = {
-    startX = 2212,
-    startY = 32,
-    startZ = -801,
-
-    length = 40,
-    width = 3,
-    height = 2,
-
-    roomEvery = 16,
-    roomSizeX = 16,
-    roomSizeY = 16,
-    roomSizeZ = 16,
-
-    waitLimit = 240
-}
+local WIDTH = 3
+local HEIGHT = 2
+local STEP_DELAY = 0.25
 
 local function waitIdle()
-    local checks = 0
-
-    while checks < CFG.waitLimit do
+    while true do
         local ok, task = pcall(function()
-            return android.currentTask()
+            return a.currentTask()
         end)
 
         if ok and task == "idle" then
-            return true
+            return
         end
 
-        sleep(0.25)
-        checks = checks + 1
+        sleep(STEP_DELAY)
     end
-
-    return false
 end
 
-local function runTask(method, x, y, z)
-    if not waitIdle() then
-        error("El androide no termino la tarea anterior.")
-    end
+local function call(method, x, y, z)
+    waitIdle()
 
     local ok, result = pcall(function()
-        return android[method](x, y, z)
+        return a[method](x, y, z)
     end)
 
     if not ok then
-        error("Fallo " .. method .. ": " .. tostring(result))
+        error(method .. ": " .. tostring(result))
     end
 
     if type(result) == "table" and result[1] == true then
-        error("Error de la API: " .. tostring(result[2]))
+        error(tostring(result[2]))
     end
 
-    if not waitIdle() then
-        error("Tiempo agotado esperando a " .. method)
-    end
+    waitIdle()
 end
 
-local function mineBlock(x, y, z)
-    runTask("breakBlock", x, y, z)
-end
+local function mineFace(x, y, z)
+    local half = math.floor(WIDTH / 2)
 
--- Excava una cara vertical delante del androide.
--- X siempre disminuye.
-local function clearTunnelFace(x)
-    local halfWidth = math.floor(CFG.width / 2)
+    -- Primero el centro y luego los laterales.
+    local offsets = {0, -1, 1}
 
-    for y = CFG.startY, CFG.startY + CFG.height - 1 do
-        for z = CFG.startZ - halfWidth,
-                 CFG.startZ + halfWidth do
-            mineBlock(x, y, z)
+    for h = 0, HEIGHT - 1 do
+        for i = 1, #offsets do
+            local targetZ = z + offsets[i]
+            call("breakBlock", x, y + h, targetZ)
         end
     end
-end
-
--- Sala situada a un lado del tunel.
--- El tunel pasa por el centro de la pared de entrada.
-local function clearRoom(backX)
-    local halfWidth = math.floor(CFG.roomSizeZ / 2)
-    local minZ = CFG.startZ - halfWidth
-    local minY = CFG.startY
-
-    print("Excavando sala en X=" .. backX)
-
-    -- Cada capa avanza en X negativo.
-    for dx = 1, CFG.roomSizeX do
-        local x = backX - dx
-
-        for dy = 0, CFG.roomSizeY - 1 do
-            for dz = 0, CFG.roomSizeZ - 1 do
-                mineBlock(x, minY + dy, minZ + dz)
-            end
-        end
-    end
-
-    print("Sala terminada en X=" .. (backX - CFG.roomSizeX))
 end
 
 local function main()
-    print("Minero iniciado: direccion X negativa")
-    print("Tunel 3x2; longitud " .. CFG.length)
+    local self = a.getSelf()
+    local y = self.posY
+    local z = self.posZ
+    local x = self.posX
 
-    for step = 1, CFG.length do
-        local nextX = CFG.startX - step
+    print("Mineria continua hacia X negativo")
+    print("Inicio: X=" .. x .. " Y=" .. y .. " Z=" .. z)
 
-        print("Despejando tramo X=" .. nextX)
-        clearTunnelFace(nextX)
+    while true do
+        local nextX = x - 1
 
-        -- Avanza solo cuando la cara esta despejada.
-        runTask("moveTo", nextX, CFG.startY, CFG.startZ)
+        -- Despejar la siguiente seccion.
+        mineFace(nextX, y, z)
 
-        if step % CFG.roomEvery == 0 then
-            clearRoom(nextX)
+        -- Avanzar un bloque hacia X negativo.
+        call("moveTo", nextX, y, z)
+
+        -- No usar una coordenada supuesta para el siguiente tramo.
+        local current = a.getSelf()
+
+        if current.posX >= x then
+            error(
+                "El androide no avanzo hacia X negativo. " ..
+                "Posicion actual X=" .. current.posX
+            )
         end
-    end
 
-    print("Recorrido terminado.")
+        x = current.posX
+        y = current.posY
+        z = current.posZ
+    end
 end
 
 local ok, err = pcall(main)
 
 if not ok then
     pcall(function()
-        android.cancelTask()
+        a.cancelTask()
     end)
-    print("MINADO DETENIDO: " .. tostring(err))
+    print("MINADO INTERRUMPIDO: " .. tostring(err))
 end
