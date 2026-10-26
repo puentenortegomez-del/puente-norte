@@ -1,13 +1,10 @@
 
 -- CC:Androids 1.3.0 - Tunel continuo
--- Minecraft Forge 1.20.1
---
+-- Forge 1.20.1
 -- Direccion: X NEGATIVO
--- Ancho: 3 bloques
--- Alto: 2 bloques
--- Suelo: Y=33 (NO SE ROMPE)
--- Espacio excavado: Y=34 y Y=35
--- Longitud: infinita
+-- Tunel: 3 ancho x 2 alto
+-- Suelo: Y=33 (NO ROMPER)
+-- Bloques excavados: Y=34 y Y=35
 
 local android = _G.android
 
@@ -20,14 +17,14 @@ local CFG = {
     maxWait = 120
 }
 
-local function position()
+local function getPosition()
     local p = android.getSelf()
 
     if type(p) ~= "table"
         or p.posX == nil
         or p.posY == nil
         or p.posZ == nil then
-        error("No se pudo leer la posicion del androide")
+        error("No se pudo obtener la posicion del androide")
     end
 
     return p
@@ -52,98 +49,80 @@ local function waitIdle()
     error("Tiempo agotado esperando a que termine la tarea")
 end
 
-local function runTask(name, x, y, z)
+local function runTask(method, x, y, z)
     waitIdle()
 
     local ok, result = pcall(function()
-        return android[name](x, y, z)
+        return android[method](x, y, z)
     end)
 
     if not ok then
-        error(name .. ": " .. tostring(result))
+        error(method .. ": " .. tostring(result))
     end
 
     if type(result) == "table" and result[1] == true then
-        error(name .. ": " .. tostring(result[2]))
+        error(method .. ": " .. tostring(result[2]))
     end
 
     waitIdle()
 end
 
-local function mineFace(x)
-    local halfWidth = math.floor(CFG.width / 2)
-
-    -- Solo se rompen bloques en Y=34 e Y=35.
-    -- Y=33 nunca se pasa a breakBlock().
+local function mineFace(x, z)
+    -- Nunca se llama a breakBlock en Y=33.
     for y = CFG.floorY + 1,
             CFG.floorY + CFG.height do
-
-        for dz = -halfWidth, halfWidth do
+        for dz = -1, 1 do
             runTask(
                 "breakBlock",
                 x,
                 y,
-                CFG.centerZ + dz
+                z + dz
             )
         end
     end
 end
 
 local function main()
-    local p = position()
+    local p = getPosition()
 
-    if p.posY ~= CFG.floorY + 1 then
-        error(
-            "El androide debe estar a Y=34. Posicion actual: Y="
-            .. tostring(p.posY)
-        )
-    end
-
-    if p.posZ ~= CFG.centerZ then
-        error(
-            "El androide debe estar en Z="
-            .. tostring(CFG.centerZ)
-            .. ". Posicion actual: Z="
-            .. tostring(p.posZ)
-        )
-    end
-
+    -- Respetar la posicion real del androide.
     local x = p.posX
+    local y = p.posY
+    local z = p.posZ
 
-    print("Mineria continua iniciada")
+    print("Tunel continuo iniciado")
+    print("Inicio X=" .. tostring(x)
+        .. " Y=" .. tostring(y)
+        .. " Z=" .. tostring(z))
     print("Direccion: X negativo")
-    print("Suelo intacto: Y=33")
-    print("Altura excavada: Y=34 y Y=35")
+    print("Suelo protegido: Y=33")
+    print("Excavacion: Y=34 y Y=35")
 
     while true do
         local targetX = x - 1
 
-        -- 1. Excavar la siguiente seccion.
-        mineFace(targetX)
+        -- Despejar la siguiente cara.
+        mineFace(targetX, z)
 
-        -- 2. Avanzar hacia X negativo.
-        runTask(
-            "moveTo",
-            targetX,
-            CFG.floorY + 1,
-            CFG.centerZ
-        )
+        -- Entrar en el tramo despejado manteniendo
+        -- la altura y la profundidad reales.
+        runTask("moveTo", targetX, y, z)
 
-        -- 3. Verificar la posicion real.
-        local current = position()
+        local current = getPosition()
 
         if current.posX >= x then
             error(
-                "No avanzo hacia X negativo. Antes: "
-                .. tostring(x)
-                .. ", ahora: "
-                .. tostring(current.posX)
+                "El androide no avanzo hacia X negativo. "
+                .. "X anterior=" .. tostring(x)
+                .. ", X actual=" .. tostring(current.posX)
             )
         end
 
         x = current.posX
+        y = current.posY
+        z = current.posZ
 
-        print("Avance correcto. X=" .. tostring(x))
+        print("Avance correcto: X=" .. tostring(x))
     end
 end
 
