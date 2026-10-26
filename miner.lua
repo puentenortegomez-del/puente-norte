@@ -1,218 +1,163 @@
-local androidApi = rawget(_G, "android")
+-- Configuración de túneles y salas
+local tunnelConfig = {
+    pathDirection = {x = 1, y = 0, z = 0}, -- avanzar en X positivo
+    tunnelLength = 40,      -- longitud del túnel
+    tunnelWidth  = 3,       -- ancho de la sección del túnel (en Z)
+    tunnelHeight = 3,        -- altura del túnel (en Y)
+    roomSize = {w = 16, h = 16, d = 16}, -- sala 16x16x16
+    roomOffsetZ = 0,         -- desplazamiento en Z respecto al centro del túnel
+    roomSpacing = 6            -- separación entre túnel y cada sala (aprox)
+}
 
-local function report(message)
-    message = tostring(message)
-    if type(androidApi) == "table" and type(androidApi.sendChatMessage) == "function" then
-        local ok, err = pcall(androidApi.sendChatMessage, message)
-        if ok then return true end
-        print("No se pudo enviar al chat: " .. tostring(err))
-    else
-        print("API android no disponible; aviso: " .. message)
-    end
-    return false
-end
+-- Utilidades auxiliares existentes (asumidas ya en tu código)
+-- local androidApi = rawget(_G, "android")
+-- local function report(...) ... end
+-- local function callApi(...) ... end
+-- local function stashHeldItem() ... end
+-- etc.
 
-local function callApi(action, fn, ...)
-    if type(fn) ~= "function" then
-        report("No existe android." .. action .. "; ejecuta el programa en la terminal del Android.")
-        return false
-    end
-    local ok, first, second = pcall(fn, ...)
-    if not ok then
-        report(action .. " fallo: " .. tostring(first))
-        return false
-    end
-    if first == true then
-        report(action .. " fallo: " .. tostring(second or "error sin detalle"))
-        return false
-    end
-    return true, first, second
-end
+-- Crear ruta base de túnel: perfora y limpia un túnel recto en X
+local function tunnelSegment(length)
+    -- Supongamos que ya estamos posicionados en el inicio del segmento
+    for i = 1, length do
+        -- Coordenadas absolutas del bloque a perforar en este paso
+        -- Ajusta baseX/baseY/baseZ según tu sistema de movimiento real
+        local baseX, baseY, baseZ = i - 1, 0, 0
 
-local function handIsOccupied()
-    local ok, name, count = callApi("getHandInfo", androidApi and androidApi.getHandInfo, "right")
-    if not ok then return nil end
-    if type(count) == "number" then return count > 0 end
-    return name ~= nil and name ~= false and name ~= "air" and name ~= "Air"
-end
-
-local function getStashItemName(index)
-    local ok, first, second = callApi("getSlotInfo", androidApi and androidApi.getSlotInfo, index)
-    if not ok then return nil, false end
-    if first == "empty" or first == nil then return nil, true end
-    if first == false then return second, true end
-    return first, true
-end
-
-local function stashHeldItem()
-    local occupied = handIsOccupied()
-    if occupied == nil then return false end
-    if not occupied then return true end
-
-    for slot = 0, 8 do
-        local name, valid = getStashItemName(slot)
-        if not valid then return false end
-        if name == nil or name == "" then
-            return callApi("storeItem", androidApi and androidApi.storeItem, slot)
+        for dz = -math.floor(tunnelConfig.tunnelWidth / 2),
+                math.floor(tunnelConfig.tunnelWidth / 2) do
+            for dy = 0, tunnelConfig.tunnelHeight - 1 do
+                local x = baseX
+                local y = dy
+                local z = baseZ + dz
+                -- Perforar (si es necesario) el bloque en (x,y,z)
+                if not callApi("breakBlock", androidApi and androidApi.breakBlock, x, y, z) then
+                    return false
+                end
+            end
         end
-    end
-    report("No hay espacio libre en el inventario del Android para guardar lo que tiene en la mano.")
-    return false
-end
 
-local function findStashSlot(fragment)
-    for slot = 0, 8 do
-        local name, valid = getStashItemName(slot)
-        if not valid then return nil end
-        if name and string.find(string.lower(tostring(name)), fragment, 1, true) then
-            return slot
-        end
-    end
-    return nil
-end
-
-local function autoRefuel()
-    local ok, fuel = callApi("fuelLevel", androidApi and androidApi.fuelLevel)
-    if not ok then return false end
-    if type(fuel) ~= "number" then
-        report("android.fuelLevel() no devolvio un numero.")
-        return false
-    end
-    if fuel >= 10 then return true end
-
-    if not stashHeldItem() then return false end
-    local redstoneSlot = findStashSlot("redstone")
-    if redstoneSlot ~= nil then
-        if not callApi("equipSlot", androidApi and androidApi.equipSlot, redstoneSlot) then return false end
-    else
-        if not callApi("pickup", androidApi and androidApi.pickup, "minecraft:redstone") then
-            report("Combustible bajo y no encontre redstone en el inventario ni en el suelo.")
+        -- Avanza la posición del jugador/bot en el mundo si tienes control de movimiento
+        -- Si no tienes una función de movimiento, este bloque puede ser opcional o simulado
+        -- moveForward(1)
+        -- Puedes añadir un chequeo de combustible
+        if not autoRefuel() then
             return false
         end
     end
-
-    local handOk, _, redstoneCount = callApi("getHandInfo", androidApi and androidApi.getHandInfo, "right")
-    if not handOk or type(redstoneCount) ~= "number" or redstoneCount < 1 then
-        report("No pude leer la cantidad de redstone equipada para recargar.")
-        return false
-    end
-    if not callApi("refuel", androidApi and androidApi.refuel, redstoneCount) then return false end
-    return stashHeldItem()
-end
-
-local oreTypes = {
-    "minecraft:coal_ore", "minecraft:deepslate_coal_ore",
-    "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
-    "minecraft:copper_ore", "minecraft:deepslate_copper_ore",
-    "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
-    "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore",
-    "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
-    "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
-    "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore",
-    "minecraft:ancient_debris"
-}
-
-local function equipTorch()
-    if not stashHeldItem() then return false end
-    local torchSlot = findStashSlot("torch")
-    if torchSlot ~= nil then
-        return callApi("equipSlot", androidApi and androidApi.equipSlot, torchSlot)
-    end
-    return callApi("pickup", androidApi and androidApi.pickup, "minecraft:torch")
-end
-
-local function mineOre(oreType)
-    local ok, blocks = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, oreType)
-    if not ok then return false end
-    if type(blocks) ~= "table" then return true end
-
-    for _, block in ipairs(blocks) do
-        if not autoRefuel() then return false end
-        if not callApi("breakBlock", androidApi and androidApi.breakBlock, block.x, block.y, block.z) then return false end
-        if not equipTorch() then return false end
-        if not callApi("useBlock", androidApi and androidApi.useBlock, block.x, block.y - 1, block.z) then return false end
-    end
     return true
 end
 
-local function distanceSquared(a, b)
-    local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
-    return dx * dx + dy * dy + dz * dz
-end
+-- Crear una sala de tamaño 16x16x16 centrada en (cx, cy, cz)
+local function createRoomAt(cx, cy, cz, size)
+    local w, h, d = size.w, size.h, size.d
+    -- Rango de la sala alrededor del centro
+    local x0 = cx - math.floor(w / 2)
+    local x1 = cx + math.floor(w / 2)
+    local y0 = cy - math.floor(h / 2)
+    local y1 = cy + math.floor(h / 2)
+    local z0 = cz - math.floor(d / 2)
+    local z1 = cz + math.floor(d / 2)
 
-local function findNearestChest()
-    local ok, chests = callApi("getBlocksOfType", androidApi and androidApi.getBlocksOfType, "minecraft:chest")
-    if not ok then return nil end
-    if type(chests) ~= "table" or #chests == 0 then return nil end
-
-    local selfOk, selfInfo = callApi("getSelf", androidApi and androidApi.getSelf)
-    if not selfOk or type(selfInfo) ~= "table" then return nil end
-    local origin = {x = selfInfo.posX, y = selfInfo.posY, z = selfInfo.posZ}
-    local nearest, bestDistance
-    for _, chest in ipairs(chests) do
-        local distance = distanceSquared(origin, chest)
-        if bestDistance == nil or distance < bestDistance then
-            nearest, bestDistance = chest, distance
-        end
-    end
-    return nearest
-end
-
-local function findEmptyChestSlot(chest)
-    local ok, info = callApi("getContainerInfo", androidApi and androidApi.getContainerInfo, chest.x, chest.y, chest.z)
-    if not ok or type(info) ~= "table" then return nil end
-    if info.locked then
-        report("El cofre mas cercano esta bloqueado.")
-        return nil
-    end
-    local slots = info.slots
-    if type(slots) ~= "table" then return nil end
-    for index, item in ipairs(slots) do
-        local name = type(item) == "table" and item[1] or nil
-        local count = type(item) == "table" and item[2] or nil
-        if count == 0 or name == nil or name == "Air" or name == "air" or name == "empty" then
-            return index - 1
-        end
-    end
-    return nil
-end
-
-local function isProtectedSupply(itemName)
-    local name = string.lower(tostring(itemName or ""))
-    local protected = {
-        "pickaxe", "axe", "shovel", "hoe", "sword", "wrench",
-        "torch", "redstone"
-    }
-    for _, fragment in ipairs(protected) do
-        if string.find(name, fragment, 1, true) then return true end
-    end
-    return false
-end
-
-local function depositLoot()
-    local chest = findNearestChest()
-    if not chest then
-        report("No encontré un cofre visible cerca para depositar el botín.")
-        return false
-    end
-
-    for slot = 0, 8 do
-        local itemName, valid = getStashItemName(slot)
-        if not valid then return false end
-        if itemName and not isProtectedSupply(itemName) then
-            local emptySlot = findEmptyChestSlot(chest)
-            if emptySlot ~= nil then
-                -- Mover al cofre: asumiendo que storeItem o similar puede usarse para transferir
-                -- Este paso puede variar según la API; se deja un ejemplo básico:
-                if not callApi("transferToChest", androidApi and androidApi.transferToChest, chest.x, chest.y, chest.z, slot, emptySlot) then
-                    report("Fallo al transferir item al cofre.")
+    for x = x0, x1 do
+        for y = y0, y1 do
+            for z = z0, z1 do
+                -- Si el bloque es sólido, lo perforamos para crear la sala
+                if not callApi("breakBlock", androidApi and androidApi.breakBlock, x, y, z) then
                     return false
                 end
-            else
-                report("No hay ranuras vacías en el cofre cercano.")
-                return false
             end
         end
     end
+
+    -- Iluminación básica en esquinas centrales de cada cara
+    placeLight = function(xx, yy, zz, kind)
+        -- Reutiliza tu API de iluminación si tienes una
+        if not callApi("placeBlock/light", androidApi and androidApi.placeBlock, xx, yy, zz, kind) then
+            -- Si no tienes función de iluminación, puedes omitir
+        end
+    end
+
+    -- Coloca antorchas en esquinas interiores de la sala
+    local lx = x0 + 2
+    local hx = x1 - 2
+    local ly = y0 + 2
+    local hz = z0 + 2
+    local hz2 = z1 - 2
+    placeLight(lx, ly, hz, "minecraft:torch")
+    placeLight(lx, ly, hz2, "minecraft:torch")
+    placeLight(hx, ly, hz, "minecraft:torch")
+    placeLight(hx, ly, hz2, "minecraft:torch")
+
     return true
 end
+
+-- Crear túneles y salas a izquierda y derecha respecto al túnel
+local function tunnelAndRooms()
+    -- Supón que ya estamos al inicio del túnel en coordenadas (0,0,0)
+    -- Túnel recto de longitud tunnelLength
+    if not tunnelSegment(tunnelConfig.tunnelLength) then
+        return false
+    end
+
+    -- Después de cada tramo, crear salas a izquierda y derecha respecto al eje Z
+    -- Usaremos posiciones relativas a lo largo del túnel:
+    local tramo = 0
+    local paso = 16 -- cada cuánto crear una sala (p. ej. cada 16 bloques de longitud)
+    while tramo < tunnelConfig.tunnelLength do
+        tramo = tramo + paso
+
+        -- Centro de la sala a la izquierda (Z menor)
+        local leftCX = tramo
+        local leftCY = 8 -- altura media de la sala
+        local leftCZ = -tunnelConfig.tunnelWidth - math.floor(tunnelConfig.roomOffsetZ / 2)
+
+        -- Centro de la sala a la derecha (Z mayor)
+        local rightCX = tramo
+        local rightCY = 8
+        local rightCZ =  tunnelConfig.tunnelWidth + math.floor(tunnelConfig.roomOffsetZ / 2)
+
+        -- Crear sala izquierda
+        if not createRoomAt(leftCX, leftCY, leftCZ, tunnelConfig.roomSize) then
+            return false
+        end
+
+        -- Crear sala derecha
+        if not createRoomAt(rightCX, rightCY, rightCZ, tunnelConfig.roomSize) then
+            return false
+        end
+
+        -- Recarga durante el progreso
+        if not autoRefuel() then
+            return false
+        end
+        -- Opcional: registrar progreso o mapa de exploración
+    end
+
+    return true
+end
+
+-- Función de entrada para iniciar el proceso completo
+local function empezarTunelesYSalas()
+    -- Preparar estado inicial si es necesario
+    -- Posicionar solución: si ya hemos perforado un tramo, adaptamos la posición
+
+    if not tunnelAndRooms() then
+        report("Fallo al generar túneles o salas.")
+        return false
+    end
+
+    report("Túneles rectos con salas de 16x16 creados exitosamente a izquierda y derecha.")
+    return true
+end
+
+-- Inicio
+local function main()
+    local ok = empezarTunelesYSalas()
+    if not ok then
+        report("Ejecución terminada con errores.")
+    end
+end
+
+-- Ejecutar
+main()
