@@ -94,7 +94,14 @@ local function autoRefuel()
         end
     end
 
-    if not callApi("refuel", androidApi and androidApi.refuel) then return false end
+    -- Pass the held stack's full count explicitly: refuel(amount) consumes
+    -- exactly that many fuel items (the entire redstone stack here).
+    local handOk, _, redstoneCount = callApi("getHandInfo", androidApi and androidApi.getHandInfo, "right")
+    if not handOk or type(redstoneCount) ~= "number" or redstoneCount < 1 then
+        report("No pude leer la cantidad de redstone equipada para recargar.")
+        return false
+    end
+    if not callApi("refuel", androidApi and androidApi.refuel, redstoneCount) then return false end
     return stashHeldItem()
 end
 
@@ -175,6 +182,19 @@ local function findEmptyChestSlot(chest)
     return nil
 end
 
+local function isProtectedSupply(itemName)
+    local name = string.lower(tostring(itemName or ""))
+    -- Keep mining equipment, lights, and fuel instead of treating them as loot.
+    local protected = {
+        "pickaxe", "axe", "shovel", "hoe", "sword", "wrench",
+        "torch", "redstone"
+    }
+    for _, fragment in ipairs(protected) do
+        if string.find(name, fragment, 1, true) then return true end
+    end
+    return false
+end
+
 local function depositLoot()
     local chest = findNearestChest()
     if not chest then
@@ -185,7 +205,7 @@ local function depositLoot()
     for slot = 0, 8 do
         local itemName, valid = getStashItemName(slot)
         if not valid then return false end
-        if itemName then
+        if itemName and not isProtectedSupply(itemName) then
             if not stashHeldItem() then return false end
             if not callApi("equipSlot", androidApi and androidApi.equipSlot, slot) then return false end
             local chestSlot = findEmptyChestSlot(chest)
